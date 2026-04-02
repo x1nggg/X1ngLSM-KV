@@ -147,6 +147,28 @@ store.clear();
 ./scripts/ci.sh                 # 完整 CI 流程
 ```
 
+## 与同类项目对比
+
+| | X1ngLSM-KV | LevelDB | RocksDB |
+|---|---|---|---|
+| 定位 | C++ 初学者进阶项目 | 通用嵌入式 KV | 高性能生产级 KV |
+| 设计原则 | 单线程，无锁，初学者友好 | 单线程安全 | 多线程并发 |
+| 外部依赖 | 无 | 无 | 可选 (lz4/zstd/gflags...) |
+| MemTable 底层 | `std::map`（跳表规划中） | 跳表 | 跳表 |
+| 墓碑机制 | 已实现 | 已实现 | 已实现 |
+| Compaction | 规划中 | Level/Sparse | Level/FIFO/Universal |
+| Bloom Filter | 规划中 | 支持 | 支持 (可配置) |
+| Immutable MemTable | 规划中 | 支持 | 支持 |
+| 数据压缩 | 规划中 | 支持 (Snappy) | 支持 (多种算法) |
+| WAL 截断 | 规划中 | 支持 | 支持 |·
+| 语言标准 | C++17 | C++11 | C++17 |
+
+X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写·，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。
+
+当前处于**阶段1（MVP）**，已实现 WAL、MemTable、SSTable、墓碑机制与崩溃恢复。阶段2 计划引入手写跳表、Compaction、Bloom Filter、数据压缩等优化，最终目标对标 LevelDB 基础设计。
+
+生产环境请选用 [LevelDB](https://github.com/google/leveldb) 或 [RocksDB](https://github.com/facebook/rocksdb)。
+
 ## 依赖
 
 - CMake 3.28+
