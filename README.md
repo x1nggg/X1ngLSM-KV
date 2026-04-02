@@ -163,7 +163,7 @@ store.clear();
 | WAL 截断 | 规划中 | 支持 | 支持 |·
 | 语言标准 | C++17 | C++11 | C++17 |
 
-X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写·，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。
+X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。
 
 当前处于**阶段1（MVP）**，已实现 WAL、MemTable、SSTable、墓碑机制与崩溃恢复。阶段2 计划引入手写跳表、Compaction、Bloom Filter、数据压缩等优化，最终目标对标 LevelDB 基础设计。
 
