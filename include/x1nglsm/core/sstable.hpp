@@ -1,13 +1,13 @@
 #pragma once
 
 #include "x1nglsm/core/entry.hpp"
+#include "x1nglsm/core/bloom_filter.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
-
 
 namespace x1nglsm::core {
 
@@ -30,13 +30,14 @@ struct SSTableFooter {
   uint32_t version;
   // 数据完整性校验，防止文件损坏
   uint32_t checksum;
-  // 预留字段，方便未来扩展功能
+  // 预留字段，目前用于记录 Bloom Filter 区的起始偏移，未来可以扩展其他元数据
   uint32_t reserved;
 };
 
 class SSTable {
 public:
-  explicit SSTable(std::string file_path) : file_path_(std::move(file_path)) {}
+  explicit SSTable(std::string file_path)
+      : file_path_(std::move(file_path)), bloom_filter_() {}
 
   ~SSTable() = default;
 
@@ -66,7 +67,10 @@ private:
   uint32_t compute_checksum(const std::string &data) const;
 
   std::string file_path_;
+
   mutable std::vector<IndexEntry> index_;
+
+  mutable BloomFilter bloom_filter_;
 };
 
 } // namespace x1nglsm::core

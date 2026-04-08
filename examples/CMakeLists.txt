@@ -7,6 +7,7 @@ set(EXAMPLE_SOURCES
     ../src/core/mem_table.cpp
     ../src/core/write_ahead_log.cpp
     ../src/core/sstable.cpp
+    ../src/core/bloom_filter.cpp
     ../src/kv_store.cpp
     ../src/utils/glob_utils.cpp
 )

@@ -1,4 +1,5 @@
 #include "x1nglsm/core/sstable.hpp"
+#include "x1nglsm/core/bloom_filter.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -43,15 +44,35 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
     file.write(reinterpret_cast<const char *>(&type_byte), sizeof(type_byte));
   }
 
-  // 3.写入 Footer
+  // 3.写入 Bloom Filter
+  // 3.1 收集所有 key
+  std::vector<std::string> keys;
+  keys.reserve(entries.size());
+  for (const auto &entry : entries) {
+    keys.emplace_back(entry.key);
+  }
+
+  // 3.2 构建 Bloom Filter
+  bloom_filter_ = BloomFilter(entries.size());
+  bloom_filter_.add_all(keys);
+
+  // 3.3 序列化 Bloom Filter 并写入文件
+  std::string bf_data = bloom_filter_.serialize();
+  // 记录 Bloom Filter 区起始偏移 (用于 Footer 的 reserved 字段）
+  uint64_t bloom_offset = static_cast<uint64_t>(file.tellp());
+
+  auto bf_size = static_cast<uint32_t>(bf_data.size());
+  file.write(reinterpret_cast<const char *>(&bf_size), sizeof(bf_size));
+  file.write(bf_data.data(), bf_data.size());
+
+  // 4.写入 Footer
   SSTableFooter footer{};
   std::memcpy(footer.magic, "SST\0", 4);
   footer.num_entries = static_cast<uint32_t>(entries.size());
   footer.data_end_offset = static_cast<uint64_t>(data_end);
-  footer.version = 1;
+  footer.version = 2;
   footer.checksum = 0; // MVP阶段暂不实现，直接设为0
-  footer.reserved = 0;
-
+  footer.reserved = static_cast<uint32_t>(bloom_offset);
   file.write(reinterpret_cast<const char *>(&footer), sizeof(footer));
 
   return file.good();
@@ -61,6 +82,11 @@ std::optional<std::string> SSTable::get(const std::string &key) const {
   // 加载索引
   if (!load_index())
     return std::nullopt;
+
+  // Bloom Filter 预检查
+  if (!bloom_filter_.may_contain(key)) {
+    return std::nullopt;
+  }
 
   // 二分查找 key
   auto it = std::lower_bound(index_.begin(), index_.end(), key,
@@ -178,6 +204,16 @@ bool SSTable::load_index() const {
     auto type = static_cast<OpType>(type_byte);
 
     index_.push_back({key, offset, type});
+  }
+
+  // 加载 Bloom Filter
+  if (footer.version == 2 && footer.reserved > 0) {
+    file.seekg(footer.reserved);
+    uint32_t bf_size;
+    file.read(reinterpret_cast<char *>(&bf_size), sizeof(bf_size));
+    std::string bf_data(bf_size, '\0');
+    file.read(bf_data.data(), bf_size);
+    bloom_filter_ = BloomFilter::deserialize(bf_data);
   }
 
   return true;

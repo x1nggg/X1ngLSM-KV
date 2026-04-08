@@ -30,6 +30,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ./bin/test/test_memtable
 ./bin/test/test_wal
 ./bin/test/test_kv_store
+./bin/test/test_bloom_filter
 ```
 
 注意：测试二进制输出到 `bin/test/`，不是 `build/test/`。测试使用自定义框架（布尔返回值），不依赖 gtest。
@@ -59,7 +60,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ### 命名空间
 
 - `x1nglsm` — 顶层命名空间，包含 `KVStore` 主接口
-- `x1nglsm::core` — 核心组件：`Entry`、`MemTable`、`SSTable`、`WriteAheadLog`
+- `x1nglsm::core` — 核心组件：`Entry`、`MemTable`、`SSTable`、`WriteAheadLog`、`BloomFilter`
 - `x1nglsm::cli` — CLI 命令处理
 - `x1nglsm::utils` — 工具函数：`glob_match`、`to_upper`、`format_size` 等
 
@@ -74,7 +75,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 
 **读取流程**（`KVStore::get`）：
 1. 查 MemTable 内部 `table_`（`std::map`），key 存在时：若为 DELETE 墓碑立即返回 `nullopt`，若为 PUT 返回值
-2. MemTable 中无该 key 时，遍历 SSTable 列表（从新到旧），通过 `index_entries()` 二分查找 key，遇到 DELETE 墓碑立即短路返回 `nullopt`
+2. MemTable 中无该 key 时，遍历 SSTable 列表（从新到旧），先通过 Bloom Filter 预检查（`may_contain`）快速跳过不可能包含该 key 的 SSTable，通过后二分查找 key，遇到 DELETE 墓碑立即短路返回 `nullopt`
 3. 全部未找到则返回 `nullopt`
 
 **Flush 流程**（`KVStore::maybe_flush`）：
@@ -100,10 +101,12 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - `clear()` 截断文件并重新打开
 
 **SSTable**（`src/core/sstable.cpp`）：
-- 文件布局：数据区 → 索引区 → Footer（固定大小）
+- 文件布局（v2）：数据区 → 索引区 → Bloom Filter 区 → Footer（固定大小）
 - 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找
-- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移
-- `index_entries()` 惰性加载（首次访问时从磁盘读取索引区），结果缓存在 `mutable` 成员中
+- Bloom Filter 区：`[bf_size(4字节)][bf_data]`，存储序列化后的 Bloom Filter，用于查询前预检查
+- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v2）、Bloom Filter 区起始偏移（`reserved` 字段）
+- v1 文件（无 Bloom Filter）仍可正常读取，默认 Bloom Filter 对所有 key 返回 true
+- `index_entries()` 惰性加载（首次访问时从磁盘读取索引区和 Bloom Filter），结果缓存在 `mutable` 成员中
 
 **Entry 序列化格式**（小端序）：
 ```
@@ -141,9 +144,9 @@ data/
 
 ## 全局设计约束
 
-| 约束 | 值 | 说明 |
-|------|----|------|
-| Flush 阈值 | 32 MB | `static constexpr size_t THRESHOLD`，MemTable 序列化大小达到此值触发 |
-| SSTable 编号 | 全局递增 uint64_t | `next_sst_id_` 控制 |
-| 时间戳 | 全局递增 uint64_t | `MemTable::next_timestamp_` 从 1 开始，WAL 恢复后通过 `advance_timestamp` 校正 |
-| 依赖 | CMake 3.28+，C++17 编译器（GCC 13+ / Clang 16+），clang-format（可选） |
+| 约束         | 值                                                                     | 说明                                                                           |
+| ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Flush 阈值   | 32 MB                                                                  | `static constexpr size_t THRESHOLD`，MemTable 序列化大小达到此值触发           |
+| SSTable 编号 | 全局递增 uint64_t                                                      | `next_sst_id_` 控制                                                            |
+| 时间戳       | 全局递增 uint64_t                                                      | `MemTable::next_timestamp_` 从 1 开始，WAL 恢复后通过 `advance_timestamp` 校正 |
+| 依赖         | CMake 3.28+，C++17 编译器（GCC 13+ / Clang 16+），clang-format（可选） |

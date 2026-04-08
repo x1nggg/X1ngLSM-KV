@@ -9,6 +9,7 @@ set(CLI_SRC_LIST
         core/mem_table.cpp
         core/write_ahead_log.cpp
         core/sstable.cpp
+        core/bloom_filter.cpp
         kv_store.cpp
 )
 

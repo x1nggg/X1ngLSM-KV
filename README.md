@@ -11,12 +11,13 @@
 
 核心组件：
 
-| 组件 | 说明 |
-|------|------|
-| **MemTable** | 内存表，使用 `std::map` 存储，支持 O(log n) 读写，达到 32MB 时自动 Flush |
-| **WAL** | 预写日志，追加写入模式，每次写入后刷盘，保证崩溃恢复 |
-| **SSTable** | 磁盘有序表，带索引区和 Footer 校验，支持二分查找 |
-| **Entry** | 核心数据单元，支持 PUT/DELETE 操作类型，含序列化和反序列化 |
+| 组件            | 说明                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| **MemTable**    | 内存表，使用 `std::map` 存储，支持 O(log n) 读写，达到 32MB 时自动 Flush |
+| **WAL**         | 预写日志，追加写入模式，每次写入后刷盘，保证崩溃恢复                     |
+| **SSTable**     | 磁盘有序表，带索引区、Bloom Filter 和 Footer，支持二分查找               |
+| **BloomFilter** | 布隆过滤器，SSTable 查询前预检查，减少不必要的磁盘 IO                    |
+| **Entry**       | 核心数据单元，支持 PUT/DELETE 操作类型，含序列化和反序列化               |
 
 ## 项目结构
 
@@ -28,6 +29,7 @@ X1ngLSM-KV/
 │   │   ├── entry.hpp       # 数据单元
 │   │   ├── mem_table.hpp   # 内存表
 │   │   ├── sstable.hpp     # 磁盘有序表
+│   │   ├── bloom_filter.hpp # 布隆过滤器
 │   │   └── write_ahead_log.hpp  # 预写日志
 │   ├── cli/                # CLI 命令
 │   │   └── commands.hpp
@@ -61,29 +63,29 @@ X1ngLSM-KV/
 
 ### CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `put <key> <value>` | 写入 |
-| `get <key>` | 查询 |
-| `del <key>` | 删除 |
-| `mput` | 批量写入 |
-| `mget` | 批量查询 |
-| `mdel` | 批量删除 |
-| `keys` | 列出所有 key |
-| `exists <key>` | 检查 key 是否存在 |
-| `info` | 数据库状态信息 |
-| `strlen <key>` | 获取 value 长度 |
-| `append <key> <value>` | 追加值 |
-| `setnx <key> <value>` | 仅当 key 不存在时写入 |
-| `incr <key>` | 自增（key 不存在时初始化为 0） |
-| `decr <key>` | 自减（key 不存在时初始化为 0） |
-| `incrby <key> <n>` | 增加指定值（key 不存在时初始化为 0） |
-| `decrby <key> <n>` | 减少指定值（key 不存在时初始化为 0） |
-| `getset <key> <value>` | 设置新值并返回旧值 |
-| `rename <key> <newkey>` | 重命名 key |
-| `ping` | 测试连接 |
-| `flushdb` | 清空数据库 |
-| `help` | 帮助信息 |
+| 命令                    | 说明                                 |
+| ----------------------- | ------------------------------------ |
+| `put <key> <value>`     | 写入                                 |
+| `get <key>`             | 查询                                 |
+| `del <key>`             | 删除                                 |
+| `mput`                  | 批量写入                             |
+| `mget`                  | 批量查询                             |
+| `mdel`                  | 批量删除                             |
+| `keys`                  | 列出所有 key                         |
+| `exists <key>`          | 检查 key 是否存在                    |
+| `info`                  | 数据库状态信息                       |
+| `strlen <key>`          | 获取 value 长度                      |
+| `append <key> <value>`  | 追加值                               |
+| `setnx <key> <value>`   | 仅当 key 不存在时写入                |
+| `incr <key>`            | 自增（key 不存在时初始化为 0）       |
+| `decr <key>`            | 自减（key 不存在时初始化为 0）       |
+| `incrby <key> <n>`      | 增加指定值（key 不存在时初始化为 0） |
+| `decrby <key> <n>`      | 减少指定值（key 不存在时初始化为 0） |
+| `getset <key> <value>`  | 设置新值并返回旧值                   |
+| `rename <key> <newkey>` | 重命名 key                           |
+| `ping`                  | 测试连接                             |
+| `flushdb`               | 清空数据库                           |
+| `help`                  | 帮助信息                             |
 
 ### 运行测试
 
@@ -92,6 +94,7 @@ X1ngLSM-KV/
 ./bin/test/test_memtable
 ./bin/test/test_wal
 ./bin/test/test_kv_store
+./bin/test/test_bloom_filter
 ```
 
 ### 运行示例
@@ -149,19 +152,19 @@ store.clear();
 
 ## 与同类项目对比
 
-| | X1ngLSM-KV | LevelDB | RocksDB |
-|---|---|---|---|
-| 定位 | C++ 初学者进阶项目 | 通用嵌入式 KV | 高性能生产级 KV |
-| 设计原则 | 单线程，无锁，初学者友好 | 单线程安全 | 多线程并发 |
-| 外部依赖 | 无 | 无 | 可选 (lz4/zstd/gflags...) |
-| MemTable 底层 | `std::map`（跳表规划中） | 跳表 | 跳表 |
-| 墓碑机制 | 已实现 | 已实现 | 已实现 |
-| Compaction | 规划中 | Level/Sparse | Level/FIFO/Universal |
-| Bloom Filter | 规划中 | 支持 | 支持 (可配置) |
-| Immutable MemTable | 规划中 | 支持 | 支持 |
-| 数据压缩 | 规划中 | 支持 (Snappy) | 支持 (多种算法) |
-| WAL 截断 | 规划中 | 支持 | 支持 |·
-| 语言标准 | C++17 | C++11 | C++17 |
+|                    | X1ngLSM-KV               | LevelDB       | RocksDB                   |
+| ------------------ | ------------------------ | ------------- | ------------------------- |
+| 定位               | C++ 初学者进阶项目       | 通用嵌入式 KV | 高性能生产级 KV           |
+| 设计原则           | 单线程，无锁，初学者友好 | 单线程安全    | 多线程并发                |
+| 外部依赖           | 无                       | 无            | 可选 (lz4/zstd/gflags...) |
+| MemTable 底层      | `std::map`（跳表规划中） | 跳表          | 跳表                      |
+| 墓碑机制           | 已实现                   | 已实现        | 已实现                    |
+| Compaction         | 规划中                   | Level/Sparse  | Level/FIFO/Universal      |
+| Bloom Filter       | 已实现                   | 支持          | 支持 (可配置)             |
+| Immutable MemTable | 规划中                   | 支持          | 支持                      |
+| 数据压缩           | 规划中                   | 支持 (Snappy) | 支持 (多种算法)           |
+| WAL 截断           | 规划中                   | 支持          | 支持                      | · |
+| 语言标准           | C++17                    | C++11         | C++17                     |
 
 X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。
 
