@@ -14,13 +14,13 @@ void MemTable::put(const std::string &key, const std::string &value,
   Entry entry(key, value, OpType::PUT, ts);
 
   // 如果key已存在，先减去旧Entry的序列化大小
-  auto it = table_.find(key);
-  if (it != table_.end()) {
-    total_encoded_size_ -= it->second.encode_size();
+  auto node = table_.find(key);
+  if (node != nullptr) {
+    total_encoded_size_ -= node->value.encode_size();
   }
 
   // 插入新的Entry，更新total_encoded_size_
-  table_[key] = entry;
+  table_.insert(key, entry);
   total_encoded_size_ += entry.encode_size();
 }
 
@@ -34,24 +34,24 @@ void MemTable::remove(const std::string &key,
   Entry entry(key, "", OpType::DELETE, ts);
 
   // 处理total_encoded_size_
-  auto it = table_.find(key);
-  if (it != table_.end()) {
-    total_encoded_size_ -= it->second.encode_size();
+  auto node = table_.find(key);
+  if (node != nullptr) {
+    total_encoded_size_ -= node->value.encode_size();
   }
 
   // 插入到table_中
-  table_[key] = entry;
+  table_.insert(key, entry);
   total_encoded_size_ += entry.encode_size();
 }
 
 std::optional<std::string> MemTable::get(const std::string &key) const {
-  auto it = table_.find(key);
+  auto node = table_.find(key);
 
   // 判断key是否存在。若存在，判断是否是墓碑
-  if (it == table_.end() || it->second.is_tombstone())
+  if (node == nullptr || node->value.is_tombstone())
     return std::nullopt;
 
-  return it->second.value;
+  return node->value.value;
 }
 
 std::vector<Entry> MemTable::get_all_entries() const {
@@ -61,8 +61,9 @@ std::vector<Entry> MemTable::get_all_entries() const {
   std::vector<Entry> result;
   result.reserve(table_.size());
 
-  for (const auto &it : table_) {
-    result.emplace_back(it.second);
+  for (auto *node = table_.header()->forward[0]; node != nullptr;
+       node = node->forward[0]) {
+    result.emplace_back(node->value);
   }
 
   return result;
@@ -72,10 +73,11 @@ std::vector<std::string> MemTable::keys() const {
   std::vector<std::string> result;
   result.reserve(table_.size());
 
-  for (const auto &it : table_) {
-    // 只返回未被删除的key（非墓碑key）
-    if (!it.second.is_tombstone()) {
-      result.emplace_back(it.first);
+  for (auto *node = table_.header()->forward[0]; node != nullptr;
+       node = node->forward[0]) {
+    // 只返回未被删除的key（非墓碑key
+    if (!node->value.is_tombstone()) {
+      result.emplace_back(node->key);
     }
   }
 
@@ -84,12 +86,15 @@ std::vector<std::string> MemTable::keys() const {
 
 size_t MemTable::size() const {
   size_t count = 0;
-  for (const auto &it : table_) {
+
+  for (auto *node = table_.header()->forward[0]; node != nullptr;
+       node = node->forward[0]) {
     // 只计算未被删除的key（非墓碑key）
-    if (!it.second.is_tombstone()) {
+    if (!node->value.is_tombstone()) {
       count++;
     }
   }
+
   return count;
 }
 

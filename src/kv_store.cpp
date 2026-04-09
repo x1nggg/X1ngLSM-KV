@@ -46,12 +46,13 @@ bool KVStore::put(const std::vector<std::pair<std::string, std::string>> &kvs) {
 std::optional<std::string> KVStore::get(const std::string &key) const {
   // 先查 MemTable（最新数据）
   // 直接查 table_ 以区分墓碑和不存在，KVStore 是 MemTable 的友元
-  auto mem_it = mem_table_.table_.find(key);
-  if (mem_it != mem_table_.table_.end()) {
+  auto mem_node = mem_table_.table_.find(key);
+  if (mem_node != nullptr) {
     // key 在 MemTable 中，如果是墓碑则立即返回 nullopt
-    if (mem_it->second.is_tombstone())
+    if (mem_node->value.is_tombstone())
       return std::nullopt;
-    return mem_it->second.value;
+
+    return mem_node->value.value;
   }
 
   // 再查 SSTable 列表
@@ -60,11 +61,10 @@ std::optional<std::string> KVStore::get(const std::string &key) const {
   for (auto it = sstables_.rbegin(); it != sstables_.rend(); ++it) {
     // 先检查 index_entries 判断类型，避免墓碑被当作"未找到"继续搜索旧表
     const auto &entries = (*it)->index_entries();
-    auto idx_it = std::lower_bound(
-        entries.begin(), entries.end(), key,
-        [](const core::IndexEntry &entry, const std::string &k) {
-          return entry.key < k;
-        });
+    auto idx_it =
+        std::lower_bound(entries.begin(), entries.end(), key,
+                         [](const core::IndexEntry &entry,
+                            const std::string &k) { return entry.key < k; });
     if (idx_it != entries.end() && idx_it->key == key) {
       // 找到了 key，如果是 DELETE 墓碑则立即返回 nullopt
       if (idx_it->type == core::OpType::DELETE)

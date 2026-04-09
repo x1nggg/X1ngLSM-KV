@@ -195,7 +195,7 @@ bool test_get_all_entries_with_tombstone() {
     auto entries = MemTableTest::get_all_entries(mt);
 
     // 应该有1个Entry（DELETE墓碑覆盖了PUT）
-    // 注意：std::map中key唯一，新的Entry会覆盖旧的
+    // 注意：SkipList中key唯一，新的Entry会覆盖旧的
     return entries.size() == 1 && entries[0].is_tombstone();
 }
 

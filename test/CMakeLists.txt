@@ -34,3 +34,6 @@ set(TEST_BLOOM_FILTER_SRC_LIST test_bloom_filter.cpp
 add_executable(test_bloom_filter ${TEST_BLOOM_FILTER_SRC_LIST})
 
 target_include_directories(test_bloom_filter PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# SkipList模块测试（header-only，不需要额外源文件）
+add_executable(test_skip_list test_skip_list.cpp)

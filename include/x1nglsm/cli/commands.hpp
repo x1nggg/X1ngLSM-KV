@@ -2,7 +2,6 @@
 
 #include "x1nglsm/kv_store.hpp"
 
-#include <functional>
 #include <string>
 #include <unordered_map>
 

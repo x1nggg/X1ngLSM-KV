@@ -121,44 +121,44 @@ int main() {
 
 #### 基本操作
 
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `put` | `put <key> <value>` | 写入 |
-| `get` | `get <key>` | 查询 |
-| `del` | `del <key>` | 删除 |
-| `mput` | `mput` | 批量写入（交互输入） |
-| `mget` | `mget` | 批量查询（交互输入） |
-| `mdel` | `mdel` | 批量删除（交互输入） |
-| `keys` | `keys` | 列出所有 key |
-| `exists` | `exists <key>` | 检查 key 是否存在 |
-| `info` | `info` | 数据库状态信息 |
+| 命令     | 格式                | 说明                 |
+| -------- | ------------------- | -------------------- |
+| `put`    | `put <key> <value>` | 写入                 |
+| `get`    | `get <key>`         | 查询                 |
+| `del`    | `del <key>`         | 删除                 |
+| `mput`   | `mput`              | 批量写入（交互输入） |
+| `mget`   | `mget`              | 批量查询（交互输入） |
+| `mdel`   | `mdel`              | 批量删除（交互输入） |
+| `keys`   | `keys`              | 列出所有 key         |
+| `exists` | `exists <key>`      | 检查 key 是否存在    |
+| `info`   | `info`              | 数据库状态信息       |
 
 #### 字符串操作
 
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `strlen` | `strlen <key>` | 获取 value 长度 |
+| 命令     | 格式                   | 说明             |
+| -------- | ---------------------- | ---------------- |
+| `strlen` | `strlen <key>`         | 获取 value 长度  |
 | `append` | `append <key> <value>` | 追加值到已有 key |
 
 #### 数值操作
 
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `incr` | `incr <key>` | 自增 1（key 不存在时初始化为 0 再操作） |
-| `decr` | `decr <key>` | 自减 1（key 不存在时初始化为 0 再操作） |
+| 命令     | 格式               | 说明                                        |
+| -------- | ------------------ | ------------------------------------------- |
+| `incr`   | `incr <key>`       | 自增 1（key 不存在时初始化为 0 再操作）     |
+| `decr`   | `decr <key>`       | 自减 1（key 不存在时初始化为 0 再操作）     |
 | `incrby` | `incrby <key> <n>` | 增加指定值（key 不存在时初始化为 0 再操作） |
 | `decrby` | `decrby <key> <n>` | 减少指定值（key 不存在时初始化为 0 再操作） |
 
 #### 其他
 
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `setnx` | `setnx <key> <value>` | 仅当 key 不存在时写入 |
-| `getset` | `getset <key> <value>` | 设置新值并返回旧值 |
-| `rename` | `rename <key> <newkey>` | 重命名 key |
-| `ping` | `ping` | 测试连接 |
-| `flushdb` | `flushdb` | 清空数据库 |
-| `help` | `help` | 帮助信息 |
+| 命令      | 格式                    | 说明                  |
+| --------- | ----------------------- | --------------------- |
+| `setnx`   | `setnx <key> <value>`   | 仅当 key 不存在时写入 |
+| `getset`  | `getset <key> <value>`  | 设置新值并返回旧值    |
+| `rename`  | `rename <key> <newkey>` | 重命名 key            |
+| `ping`    | `ping`                  | 测试连接              |
+| `flushdb` | `flushdb`               | 清空数据库            |
+| `help`    | `help`                  | 帮助信息              |
 
 ---
 

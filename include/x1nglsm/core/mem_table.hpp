@@ -1,8 +1,8 @@
 #pragma once
 
 #include "entry.hpp"
+#include "x1nglsm/core/skip_list.hpp"
 
-#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,7 +26,7 @@ namespace x1nglsm::core {
  * - 删除支持：使用墓碑（Tombstone）标记删除
  *
  * ## 关键设计
- * - 使用std::map存储，数据按key有序
+ * - 使用跳表（SkipList）存储，数据按key有序
  * - 时间戳全局递增，保证数据新旧关系
  * - 删除不真正删除数据，而是写入DELETE类型Entry
  * - 维护序列化大小，用于判断Flush时机（默认32MB）
@@ -104,10 +104,8 @@ private:
   // 获取所有Entry（按key有序，用于Flush）
   std::vector<Entry> get_all_entries() const;
 
-  // ========== 成员变量 ==========
-
-  // 核心存储：key -> value的有序映射
-  std::map<std::string, Entry> table_;
+  // 核心存储：跳表，数据按 key 有序
+  SkipList<std::string, Entry> table_;
   // 全局时间戳计数器，每次写入递增
   uint64_t next_timestamp_;
   // 记录当前MemTable的序列化字节大小，用于判断何时触发Flush

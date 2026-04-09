@@ -31,6 +31,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ./bin/test/test_wal
 ./bin/test/test_kv_store
 ./bin/test/test_bloom_filter
+./bin/test/test_skip_list
 ```
 
 注意：测试二进制输出到 `bin/test/`，不是 `build/test/`。测试使用自定义框架（布尔返回值），不依赖 gtest。
@@ -60,7 +61,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ### 命名空间
 
 - `x1nglsm` — 顶层命名空间，包含 `KVStore` 主接口
-- `x1nglsm::core` — 核心组件：`Entry`、`MemTable`、`SSTable`、`WriteAheadLog`、`BloomFilter`
+- `x1nglsm::core` — 核心组件：`Entry`、`MemTable`、`SSTable`、`WriteAheadLog`、`BloomFilter`、`SkipList`
 - `x1nglsm::cli` — CLI 命令处理
 - `x1nglsm::utils` — 工具函数：`glob_match`、`to_upper`、`format_size` 等
 
@@ -74,7 +75,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 3. 每次写入后检查 MemTable 序列化大小，达到 32MB 阈值时触发 `maybe_flush()`
 
 **读取流程**（`KVStore::get`）：
-1. 查 MemTable 内部 `table_`（`std::map`），key 存在时：若为 DELETE 墓碑立即返回 `nullopt`，若为 PUT 返回值
+1. 查 MemTable 内部 `table_`（`SkipList`），key 存在时：若为 DELETE 墓碑立即返回 `nullopt`，若为 PUT 返回值
 2. MemTable 中无该 key 时，遍历 SSTable 列表（从新到旧），先通过 Bloom Filter 预检查（`may_contain`）快速跳过不可能包含该 key 的 SSTable，通过后二分查找 key，遇到 DELETE 墓碑立即短路返回 `nullopt`
 3. 全部未找到则返回 `nullopt`
 
@@ -90,10 +91,15 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ### 关键组件
 
 **MemTable**（`src/core/mem_table.cpp`）：
-- 底层 `std::map<std::string, Entry>`，按 key 有序
+- 底层 `SkipList<std::string, Entry>`，按 key 有序，期望 O(log n) 查找/插入
 - 维护 `total_encoded_size_` 追踪序列化大小，用于 flush 判断
 - `next_timestamp_` 从 1 递增，保证全局唯一
 - `advance_timestamp()` 用于 WAL 恢复后校正时间戳（取 max）
+
+**SkipList**（`include/x1nglsm/core/skip_list.hpp`）：
+- 概率平衡的有序数据结构，header-only 模板类
+- MAX_LEVEL = 16，每层 50% 晋升概率
+- 支持 `insert`、`find`、`clear`、`size`、`empty`，遍历通过 `header()->forward[0]` 链表
 
 **WAL**（`src/core/write_ahead_log.cpp`）：
 - 追加写入，文件格式为 `[4字节长度][Entry序列化数据]` 循环

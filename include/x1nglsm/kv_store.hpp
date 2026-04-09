@@ -26,7 +26,7 @@ namespace x1nglsm {
  * - 崩溃恢复：启动时从 SSTable 和 WAL 恢复数据
  *
  * ## 架构组件
- * - MemTable：内存表，使用 std::map 存储最新数据
+ * - MemTable：内存表，使用跳表（SkipList）存储最新数据
  * - WAL：预写日志，保证数据不丢失
  * - SSTable：磁盘存储表，支持索引快速查找
  *

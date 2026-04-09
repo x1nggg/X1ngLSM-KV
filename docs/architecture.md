@@ -52,10 +52,17 @@ struct Entry {
 
 ### MemTable — 内存表
 
-- 底层使用 `std::map`，数据按 key 有序
+- 底层使用手写跳表（`SkipList`），数据按 key 有序，期望 O(log n) 查找/插入
 - 维护 `total_encoded_size_` 追踪序列化后大小
 - 达到 **32MB** 时触发 Flush
 - 删除操作写入墓碑（Tombstone）Entry，不实际删除
+
+### SkipList — 跳表
+
+- 概率平衡的有序数据结构，header-only 模板类
+- MAX_LEVEL = 16，每层 50% 晋升概率
+- 支持 `insert`、`find`、`clear`、`size`、`empty`
+- 遍历通过 `header()->forward[0]` 链表实现
 
 ### WAL — 预写日志
 
@@ -66,7 +73,7 @@ struct Entry {
 
 ### SSTable — 磁盘有序表
 
-文件布局：
+文件布局（v2）：
 
 ```
 ┌──────────────────────────────────┐
@@ -75,6 +82,9 @@ struct Entry {
 ├──────────────────────────────────┤
 │           索引区                  │
 │  [IndexEntry1]...[IndexEntryN]   │
+├──────────────────────────────────┤
+│        Bloom Filter 区           │
+│  [bf_size(4)][bf_data]           │
 ├──────────────────────────────────┤
 │           Footer (固定大小)       │
 │  magic(4) | num_entries(4)       │
@@ -85,9 +95,18 @@ struct Entry {
 
 - **数据区**：按 key 有序存储的 Entry 列表
 - **索引区**：每条记录 key 和对应的数据区偏移量，支持二分查找
-- **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、checksum 等
+- **Bloom Filter 区**：序列化后的 Bloom Filter，查询前预检查，跳过不存在的 key
+- **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、版本号（v2）、Bloom Filter 区偏移（`reserved` 字段）等
+- v1 文件（无 Bloom Filter）仍可正常读取
 
-读取流程：加载 Footer → 定位索引区 → 二分查找 key → 按偏移量读取数据。
+读取流程：加载 Footer → 定位索引区和 Bloom Filter → Bloom Filter 预检查 → 二分查找 key → 按偏移量读取数据。
+
+### BloomFilter — 布隆过滤器
+
+- 概率型数据结构，判断 key "可能存在" 或 "一定不存在"
+- 每个 SSTable 关联一个 Bloom Filter
+- 查询前先检查 Bloom Filter，跳过不可能包含该 key 的 SSTable，减少磁盘 IO
+- 使用双哈希法生成多个哈希值，位数组和哈希函数数量根据预期元素数和误判率自动计算
 
 ## 关键流程
 
@@ -118,13 +137,12 @@ Client → KVStore::get(key)
            │     └─ key 存在且为 DELETE → 返回 nullopt（墓碑短路）
            │
            └─→ SSTable 查找（从新到旧） // 2. 逐表查找
+                 ├─ Bloom Filter 预检查 → 不可能包含则跳过
                  ├─ key 存在且为 PUT → 返回值
                  ├─ key 存在且为 DELETE → 返回 nullopt（墓碑短路，不继续搜索旧表）
                  └─ key 不存在 → 继续搜索更旧的表
                  └─ 全部未找到 → nullopt
 ```
-
-### 崩溃恢复流程
 
 ### 崩溃恢复流程
 
@@ -163,10 +181,10 @@ data/
 
 ## 全局设计约束
 
-| 约束 | 值 | 说明 |
-|------|----|------|
-| Flush 阈值 | 32 MB | MemTable 序列化大小达到此值触发 Flush |
-| SSTable 编号 | 全局递增 uint64_t | `next_sst_id_` 控制 |
-| 时间戳 | 全局递增 uint64_t | MemTable 内维护 `next_timestamp_` |
-| 命名空间 | `x1nglsm` / `x1nglsm::core` / `x1nglsm::cli` / `x1nglsm::utils` | — |
-| C++ 标准 | C++17 | — |
+| 约束         | 值                                                              | 说明                                  |
+| ------------ | --------------------------------------------------------------- | ------------------------------------- |
+| Flush 阈值   | 32 MB                                                           | MemTable 序列化大小达到此值触发 Flush |
+| SSTable 编号 | 全局递增 uint64_t                                               | `next_sst_id_` 控制                   |
+| 时间戳       | 全局递增 uint64_t                                               | MemTable 内维护 `next_timestamp_`     |
+| 命名空间     | `x1nglsm` / `x1nglsm::core` / `x1nglsm::cli` / `x1nglsm::utils` | —                                     |
+| C++ 标准     | C++17                                                           | —                                     |
