@@ -66,6 +66,9 @@ size_t sstables_count() const;
 // MemTable 内存使用（字节）
 size_t mem_usage() const;
 
+// WAL 文件大小（字节）
+size_t wal_size() const;
+
 // 清空所有数据（MemTable、WAL、SSTable）
 void clear();
 ```
@@ -215,4 +218,14 @@ void initialize_data_directory(std::string &data_dir);
 ```cpp
 // 解析命令行参数，输出数据目录路径
 void parse_args(int argc, char *argv[], std::string &out_dir);
+```
+
+### crc32
+
+头文件 `<x1nglsm/utils/crc32.hpp>`。
+
+```cpp
+// 计算 CRC32 校验和
+uint32_t crc32(const void *data, size_t len);
+uint32_t crc32(const std::string &data);
 ```

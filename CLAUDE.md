@@ -63,7 +63,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - `x1nglsm` — 顶层命名空间，包含 `KVStore` 主接口
 - `x1nglsm::core` — 核心组件：`Entry`、`MemTable`、`SSTable`、`WriteAheadLog`、`BloomFilter`、`SkipList`
 - `x1nglsm::cli` — CLI 命令处理
-- `x1nglsm::utils` — 工具函数：`glob_match`、`to_upper`、`format_size` 等
+- `x1nglsm::utils` — 工具函数：`glob_match`、`to_upper`、`format_size`、`crc32` 等
 
 ### 核心数据流
 
@@ -102,9 +102,11 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - 支持 `insert`、`find`、`clear`、`size`、`empty`，遍历通过 `header()->forward[0]` 链表
 
 **WAL**（`src/core/write_ahead_log.cpp`）：
-- 追加写入，文件格式为 `[4字节长度][Entry序列化数据]` 循环
-- 每次 `append()` 后立即 `flush()` 刷盘
+- 追加写入，文件格式为 `[4字节长度][4字节CRC32][Entry序列化数据]` 循环
+- 每次 `append()` 后立即 `sync()` 刷盘（`file_.flush()` + `fsync()` 保证数据落盘）
+- CRC32 校验：恢复时检测损坏记录（崩溃时写入不完整的数据），跳过损坏部分
 - `clear()` 截断文件并重新打开
+- 跨平台支持：Windows 用 `_commit()`，Linux/macOS 用 `fsync()`
 
 **SSTable**（`src/core/sstable.cpp`）：
 - 文件布局（v2）：数据区 → 索引区 → Bloom Filter 区 → Footer（固定大小）

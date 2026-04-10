@@ -14,7 +14,7 @@
 | 组件            | 说明                                                                        |
 | --------------- | --------------------------------------------------------------------------- |
 | **MemTable**    | 内存表，使用手写跳表（SkipList）存储，O(log n) 读写，达到 32MB 时自动 Flush |
-| **WAL**         | 预写日志，追加写入模式，每次写入后刷盘，保证崩溃恢复                        |
+| **WAL**         | 预写日志，追加写入 + fsync 落盘 + CRC32 校验，保证崩溃恢复                  |
 | **SSTable**     | 磁盘有序表，带索引区、Bloom Filter 和 Footer，支持二分查找                  |
 | **BloomFilter** | 布隆过滤器，SSTable 查询前预检查，减少不必要的磁盘 IO                       |
 | **Entry**       | 核心数据单元，支持 PUT/DELETE 操作类型，含序列化和反序列化                  |
@@ -39,7 +39,8 @@ X1ngLSM-KV/
 │       ├── glob_utils.hpp  # 通配符匹配
 │       ├── string_utils.hpp
 │       ├── arg_utils.hpp
-│       └── system_utils.hpp
+│       ├── system_utils.hpp
+│       └── crc32.hpp        # CRC32 校验
 ├── src/                    # 源文件（结构与 include 对应）
 ├── test/                   # 测试
 ├── examples/               # 示例程序
@@ -166,7 +167,7 @@ store.clear();
 | Bloom Filter       | 已实现                   | 支持          | 支持 (可配置)             |
 | Immutable MemTable | 规划中                   | 支持          | 支持                      |
 | 数据压缩           | 规划中                   | 支持 (Snappy) | 支持 (多种算法)           |
-| WAL 截断           | 规划中                   | 支持          | 支持                      | · |
+| WAL 截断           | 已实现                   | 支持          | 支持                      |
 | 语言标准           | C++17                    | C++11         | C++17                     |
 
 X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。

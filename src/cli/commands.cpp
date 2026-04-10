@@ -433,6 +433,7 @@ void handle_info(KVStore &store) {
             << "  disk_usage: " << utils::format_size(disk_usage) << "\n"
             << "  mem_table:  " << utils::format_size(store.mem_usage())
             << " (internal)\n"
+            << "  wal:        " << utils::format_size(store.wal_size()) << "\n"
             << "  data_dir:   " << abs_path << "\n";
 }
 

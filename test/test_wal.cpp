@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <filesystem>
 
 using namespace x1nglsm::core;
 
@@ -269,6 +270,67 @@ bool test_mixed_operations() {
     return true;
 }
 
+// test_crc_corruption - 篡改文件后CRC校验应失败，只返回完整记录
+bool test_crc_corruption() {
+    std::string test_path = "test_wal_crc.log";
+    cleanup_test_file(test_path);
+
+    // 写入 3 条记录
+    {
+        WriteAheadLog wal(test_path);
+        wal.append(Entry("key1", "value1", OpType::PUT, 1));
+        wal.append(Entry("key2", "value2", OpType::PUT, 2));
+        wal.append(Entry("key3", "value3", OpType::PUT, 3));
+    }
+
+    // 篡改文件：在文件末尾追加垃圾数据（模拟崩溃时写入不完整）
+    {
+        std::ofstream file(test_path, std::ios::binary | std::ios::app);
+        file.write("garbage_data", 13);
+    }
+
+    // 读取：前 3 条记录应该完好，损坏部分应被跳过
+    {
+        WriteAheadLog wal(test_path);
+        auto entries = wal.read_all();
+
+        if (entries.size() != 3) return false;
+        if (entries[0].key != "key1") return false;
+        if (entries[1].key != "key2") return false;
+        if (entries[2].key != "key3") return false;
+    }
+
+    cleanup_test_file(test_path);
+    return true;
+}
+
+// test_size_tracking - 写入后文件应增长
+bool test_size_tracking() {
+    std::string test_path = "test_wal_size.log";
+    cleanup_test_file(test_path);
+
+    {
+        WriteAheadLog wal(test_path);
+        wal.append(Entry("key1", "value1", OpType::PUT, 1));
+    }
+
+    // 写入后文件应有内容
+    size_t size_after_one = std::filesystem::file_size(test_path);
+    if (size_after_one == 0) return false;
+
+    // 再写入一条，文件应更大
+    {
+        WriteAheadLog wal(test_path);
+        wal.append(Entry("key2", "value2", OpType::PUT, 2));
+    }
+
+    size_t size_after_two = std::filesystem::file_size(test_path);
+    if (size_after_two <= size_after_one) return false;
+
+    cleanup_test_file(test_path);
+    return true;
+}
+
 // ========== 主函数 ==========
 
 int main() {
@@ -291,6 +353,8 @@ int main() {
             {"test_append_empty",        test_append_empty},
             {"test_delete_entry",        test_delete_entry},
             {"test_mixed_operations",    test_mixed_operations},
+            {"test_crc_corruption",      test_crc_corruption},
+            {"test_size_tracking",       test_size_tracking},
     };
 
     int num_tests = sizeof(tests) / sizeof(tests[0]);
@@ -325,6 +389,8 @@ int main() {
     cleanup_test_file("test_wal_empty_append.log");
     cleanup_test_file("test_wal_delete.log");
     cleanup_test_file("test_wal_mixed.log");
+    cleanup_test_file("test_wal_crc.log");
+    cleanup_test_file("test_wal_size.log");
 
     return (passed == total) ? 0 : 1;
 }

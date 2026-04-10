@@ -1,6 +1,7 @@
 #pragma once
 
 #include "entry.hpp"
+#include "x1nglsm/utils/crc32.hpp"
 
 #include <fstream>
 #include <string>
@@ -70,10 +71,10 @@ private:
   // 关闭WAL文件
   void close();
 
-  // ========== 成员变量 ==========
-
   std::string file_path_;
+
   std::ofstream file_; // 写文件流
+  
   size_t current_size_;
 };
 

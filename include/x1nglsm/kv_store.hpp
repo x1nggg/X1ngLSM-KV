@@ -47,29 +47,29 @@ public:
 
   ~KVStore() = default;
 
-  // 写入key-value
+  // 写入 key-value
   bool put(const std::string &key, const std::string &value);
 
-  // 批量写入key-value
+  // 批量写入 key-value
   bool put(const std::vector<std::pair<std::string, std::string>> &kvs);
 
   // 查询key
   std::optional<std::string> get(const std::string &key) const;
 
-  // 批量查询key
+  // 批量查询 key
   std::vector<std::optional<std::string>>
   get(const std::vector<std::string> &keys) const;
 
-  // 删除key（写入墓碑key）
+  // 删除key（写入墓碑 key）
   bool remove(const std::string &key);
 
-  // 批量删除key
+  // 批量删除 key
   bool remove(const std::vector<std::string> &keys);
 
-  // 检查key是否存在
+  // 检查 key 是否存在
   bool exists(const std::string &key) const;
 
-  // 获取所有key（包括 MemTable 和 SSTable）
+  // 获取所有 key（包括 MemTable 和 SSTable）
   std::vector<std::string> keys() const;
 
   // 获取key数量（包括 MemTable 和 SSTable）
@@ -80,6 +80,9 @@ public:
 
   // 获取内存使用（字节）
   size_t mem_usage() const { return mem_table_.total_encoded_size(); };
+
+  // 获取 WAL 文件大小（字节）
+  size_t wal_size() const { return wal_->size(); }
 
   // 清空数据库（包括 MemTable、WAL 和所有 SSTable）
   void clear();

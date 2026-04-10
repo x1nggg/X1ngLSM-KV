@@ -67,9 +67,11 @@ struct Entry {
 ### WAL — 预写日志
 
 - 追加写入模式（Append-Only）
-- 每次 `append()` 后调用 `flush()` 刷盘
+- 每次 `append()` 后调用 `sync()` 刷盘（`file_.flush()` + `fsync()` 双重保证数据落盘）
 - MemTable Flush 到 SSTable 后清空 WAL
-- 文件格式：`[4字节长度][Entry数据]` 循环
+- 文件格式：`[4字节长度][4字节CRC32][Entry数据]` 循环
+- CRC32 校验：恢复时检测损坏记录，跳过崩溃时写入不完整的数据
+- 跨平台 fsync：Windows 用 `_commit()`，Linux/macOS 用 `fsync()`
 
 ### SSTable — 磁盘有序表
 
