@@ -25,8 +25,9 @@ namespace x1nglsm::core {
  * - 顺序写：追加写模式，保证高性能
  *
  * ## 关键设计
- * - 数据格式：[4字节长度][Entry数据]
- * - 刷盘策略：每次Append后flush()
+ * - 数据格式：[4字节长度][4字节CRC32][Entry数据]
+ * - 刷盘策略：每次Append后sync()（flush + fsync 双重落盘）
+ * - CRC32校验：恢复时检测损坏记录，跳过崩溃时写入不完整的数据
  * - 清理时机：MemTable Flush到SSTable后清空
  */
 class WriteAheadLog {

@@ -11,14 +11,14 @@
 
 核心组件：
 
-| 组件            | 说明                                                                        |
-| --------------- | --------------------------------------------------------------------------- |
-| **MemTable**    | 内存表，使用手写跳表（SkipList）存储，O(log n) 读写，达到 32MB 时自动 Flush |
-| **WAL**         | 预写日志，追加写入 + fsync 落盘 + CRC32 校验，保证崩溃恢复                  |
-| **SSTable**     | 磁盘有序表，带索引区、Bloom Filter 和 Footer，支持二分查找                  |
-| **BloomFilter** | 布隆过滤器，SSTable 查询前预检查，减少不必要的磁盘 IO                       |
-| **Entry**       | 核心数据单元，支持 PUT/DELETE 操作类型，含序列化和反序列化                  |
-| **SkipList**    | 手写跳表，MemTable 底层存储，概率平衡 O(log n)                              |
+| 组件            | 说明                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| **MemTable**    | 内存表，使用手写跳表（SkipList）存储，O(log n) 读写，达到阈值时 move 为 Immutable 再 Flush |
+| **WAL**         | 预写日志，追加写入 + fsync 落盘 + CRC32 校验，保证崩溃恢复                                 |
+| **SSTable**     | 磁盘有序表，带索引区、Bloom Filter 和 Footer，支持二分查找                                 |
+| **BloomFilter** | 布隆过滤器，SSTable 查询前预检查，减少不必要的磁盘 IO                                      |
+| **Entry**       | 核心数据单元，支持 PUT/DELETE 操作类型，含序列化和反序列化                                 |
+| **SkipList**    | 手写跳表，MemTable 底层存储，概率平衡 O(log n)                                             |
 
 ## 项目结构
 
@@ -161,18 +161,18 @@ store.clear();
 | 定位               | C++ 初学者进阶项目       | 通用嵌入式 KV | 高性能生产级 KV           |
 | 设计原则           | 单线程，无锁，初学者友好 | 单线程安全    | 多线程并发                |
 | 外部依赖           | 无                       | 无            | 可选 (lz4/zstd/gflags...) |
-| MemTable 底层      | 手写跳表                | 跳表          | 跳表                      |
+| MemTable 底层      | 手写跳表                 | 跳表          | 跳表                      |
 | 墓碑机制           | 已实现                   | 已实现        | 已实现                    |
 | Compaction         | 规划中                   | Level/Sparse  | Level/FIFO/Universal      |
 | Bloom Filter       | 已实现                   | 支持          | 支持 (可配置)             |
-| Immutable MemTable | 规划中                   | 支持          | 支持                      |
+| Immutable MemTable | 已实现                   | 支持          | 支持                      |
 | 数据压缩           | 规划中                   | 支持 (Snappy) | 支持 (多种算法)           |
 | WAL 截断           | 已实现                   | 支持          | 支持                      |
 | 语言标准           | C++17                    | C++11         | C++17                     |
 
 X1ngLSM-KV 是一个面向 C++ 初学者的 LSM-Tree 存储引擎进阶项目。核心逻辑全部手写，全程单线程无锁设计，代码量小、结构清晰，适合理解 LSM-Tree 的核心原理。
 
-当前处于**阶段2**，已实现 WAL、MemTable（手写跳表）、SSTable、Bloom Filter、墓碑机制与崩溃恢复。后续计划引入 Compaction、数据压缩、Immutable MemTable 等优化，最终目标对标 LevelDB 基础设计。
+当前处于**阶段2**，已实现 WAL、MemTable（手写跳表）、SSTable、Bloom Filter、墓碑机制、Immutable MemTable 与崩溃恢复。后续计划引入 Compaction、数据压缩等优化，最终目标对标 LevelDB 基础设计。
 
 生产环境请选用 [LevelDB](https://github.com/google/leveldb) 或 [RocksDB](https://github.com/facebook/rocksdb)。
 

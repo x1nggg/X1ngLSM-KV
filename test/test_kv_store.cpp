@@ -184,8 +184,7 @@ bool test_flush() {
     {
         KVStore store(test_dir);
 
-        // 写入足够多的数据触发 Flush（超过 32MB）
-        // 为了测试方便，我们写入大值
+        // 写入大值数据触发 Flush（MemTable → Immutable → SSTable）
         std::string large_value(5 * 1024 * 1024, 'x');  // 5MB
 
         // 写入 7 次，总共 35MB，应该触发 Flush
@@ -402,6 +401,75 @@ bool test_recovery_timestamp_correctness() {
     return true;
 }
 
+// test_immutable_flush - 测试 Immutable MemTable flush 后状态正确
+bool test_immutable_flush() {
+    std::string test_dir = "./data/test/test_immutable_flush";
+    cleanup_test_dir(test_dir);
+
+    {
+        // 使用小阈值（1KB），方便触发 flush
+        KVStore store(test_dir, 1024);
+
+        // 写入几条数据触发 flush（MemTable → Immutable → SSTable）
+        store.put("key1", "value1");
+        store.put("key2", "value2");
+        store.put("key3", std::string(1024, 'x')); // 触发 flush
+
+        // flush 完成后，数据应全部可读（在 SSTable 中）
+        auto r1 = store.get("key1");
+        auto r2 = store.get("key2");
+        auto r3 = store.get("key3");
+        if (!r1.has_value() || r1.value() != "value1") return false;
+        if (!r2.has_value() || r2.value() != "value2") return false;
+        if (!r3.has_value() || r3.value() != std::string(1024, 'x')) return false;
+
+        // SSTable 数量应为 1
+        if (store.sstables_count() != 1) return false;
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
+// test_immutable_and_active - 测试 flush 后新数据写入活跃 MemTable，新旧数据均可读
+bool test_immutable_and_active() {
+    std::string test_dir = "./data/test/test_immutable_active";
+    cleanup_test_dir(test_dir);
+
+    {
+        KVStore store(test_dir, 1024);
+
+        // 第一轮：写入触发 flush（数据进入 SSTable）
+        store.put("old_key1", "value1");
+        store.put("old_key2", "value2");
+        store.put("old_key3", std::string(1024, 'x')); // 触发 flush
+
+        // 第二轮：继续写入新数据（在活跃 MemTable 中）
+        store.put("new_key1", "new_value1");
+        store.put("new_key2", "new_value2");
+
+        // 新旧数据都应可读
+        auto r1 = store.get("old_key1");
+        auto r2 = store.get("old_key2");
+        auto r3 = store.get("old_key3");
+        if (!r1.has_value() || r1.value() != "value1") return false;
+        if (!r2.has_value() || r2.value() != "value2") return false;
+        if (!r3.has_value() || r3.value() != std::string(1024, 'x')) return false;
+
+        auto r4 = store.get("new_key1");
+        auto r5 = store.get("new_key2");
+        if (!r4.has_value() || r4.value() != "new_value1") return false;
+        if (!r5.has_value() || r5.value() != "new_value2") return false;
+
+        // keys() 应包含所有有效 key
+        auto all_keys = store.keys();
+        if (all_keys.size() != 5) return false;
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
 // ========== 主函数 ==========
 
 int main() {
@@ -429,6 +497,8 @@ int main() {
             {"test_keys_cross_sstable_delete", test_keys_cross_sstable_delete},
             {"test_get_cross_sstable_tombstone", test_get_cross_sstable_tombstone},
             {"test_recovery_timestamp_correctness", test_recovery_timestamp_correctness},
+            {"test_immutable_flush",                 test_immutable_flush},
+            {"test_immutable_and_active",            test_immutable_and_active},
     };
 
     int num_tests = sizeof(tests) / sizeof(tests[0]);
@@ -468,6 +538,8 @@ int main() {
     cleanup_test_dir("./data/test/test_keys_cross_sstable");
     cleanup_test_dir("./data/test/test_get_cross_sstable_tomb");
     cleanup_test_dir("./data/test/test_recovery_timestamp");
+    cleanup_test_dir("./data/test/test_immutable_flush");
+    cleanup_test_dir("./data/test/test_immutable_active");
 
     return (passed == total) ? 0 : 1;
 }

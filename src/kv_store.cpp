@@ -6,12 +6,11 @@
 #include <unordered_set>
 #include <utility>
 
-static constexpr size_t THRESHOLD = 32 * 1024 * 1024; // Flush 阈值（32MB）
-
 namespace x1nglsm {
 
-KVStore::KVStore(std::string db_dir)
-    : db_dir_(std::move(db_dir)), next_sst_id_(1) {
+KVStore::KVStore(std::string db_dir, size_t flush_threshold)
+    : db_dir_(std::move(db_dir)), next_sst_id_(1),
+      flush_threshold_(flush_threshold) {
   // 创建数据目录（如果不存在）
   std::filesystem::create_directories(db_dir_);
 
@@ -19,7 +18,8 @@ KVStore::KVStore(std::string db_dir)
   sstable_dir_ = db_dir_ + "/sstables";
   std::filesystem::create_directories(sstable_dir_);
 
-  // 创建 WAL
+  // 创建 MemTable 和 WAL
+  mem_table_ = std::make_unique<core::MemTable>();
   wal_ = std::make_unique<core::WriteAheadLog>(db_dir_ + "/wal.log");
 
   // 恢复已有 SSTable
@@ -30,7 +30,7 @@ KVStore::KVStore(std::string db_dir)
 }
 
 bool KVStore::put(const std::string &key, const std::string &value) {
-  uint64_t timestamp = mem_table_.get_next_timestamp();
+  uint64_t timestamp = mem_table_->get_next_timestamp();
   core::Entry entry(key, value, core::OpType::PUT, timestamp);
   return write_to_wal_and_memtable(entry);
 }
@@ -46,8 +46,12 @@ bool KVStore::put(const std::vector<std::pair<std::string, std::string>> &kvs) {
 std::optional<std::string> KVStore::get(const std::string &key) const {
   // 先查 MemTable（最新数据）
   // 直接查 table_ 以区分墓碑和不存在，KVStore 是 MemTable 的友元
-  auto mem_node = mem_table_.table_.find(key);
-  if (mem_node != nullptr) {
+  auto mem_node = mem_table_->table_.find(key);
+  if (!mem_node && immutable_mem_table_) {
+    mem_node = immutable_mem_table_->table_.find(key);
+  }
+
+  if (mem_node) {
     // key 在 MemTable 中，如果是墓碑则立即返回 nullopt
     if (mem_node->value.is_tombstone())
       return std::nullopt;
@@ -90,7 +94,7 @@ KVStore::get(const std::vector<std::string> &keys) const {
 }
 
 bool KVStore::remove(const std::string &key) {
-  uint64_t timestamp = mem_table_.get_next_timestamp();
+  uint64_t timestamp = mem_table_->get_next_timestamp();
   core::Entry entry(key, "", core::OpType::DELETE, timestamp);
   return write_to_wal_and_memtable(entry);
 }
@@ -105,15 +109,15 @@ void KVStore::recover_from_wal() {
     if (entry.timestamp > max_ts)
       max_ts = entry.timestamp;
     if (entry.type == core::OpType::PUT) {
-      mem_table_.put(entry.key, entry.value, entry.timestamp);
+      mem_table_->put(entry.key, entry.value, entry.timestamp);
     } else {
-      mem_table_.remove(entry.key, entry.timestamp);
+      mem_table_->remove(entry.key, entry.timestamp);
     }
   }
 
   // 恢复后推进时间戳，确保后续写入不会重复使用已存在的时间戳
   if (max_ts > 0) {
-    mem_table_.advance_timestamp(max_ts + 1);
+    mem_table_->advance_timestamp(max_ts + 1);
   }
 }
 
@@ -155,15 +159,34 @@ void KVStore::recover_sstables() {
 }
 
 void KVStore::maybe_flush() {
-  if (mem_table_.total_encoded_size() < THRESHOLD)
+  if (mem_table_->total_encoded_size() < flush_threshold_)
     return;
 
-  // 1. 生成新的 SSTable 文件路径
+  // 1. 如果有旧的 immutable 还没 flush，先 flush 它
+  if (immutable_mem_table_) {
+    flush_immutable();
+  }
+
+  // 2. 把当前 memtable move 给 immutable
+  immutable_mem_table_ = std::move(mem_table_);
+
+  // 3. 创建新的空 memtable
+  mem_table_ = std::make_unique<core::MemTable>();
+
+  // 4. flush immutable 到 SSTable
+  flush_immutable();
+}
+
+void KVStore::flush_immutable() {
+  if (!immutable_mem_table_)
+    return;
+
+  // 1. 生成 SSTable 文件路径
   std::string filename =
       sstable_dir_ + "/" + std::to_string(next_sst_id_++) + ".sst";
 
-  // 2. 从 MemTable 获取所有 Entry
-  auto entries = mem_table_.get_all_entries();
+  // 2. 从 Immutable MemTable 获取所有 Entry
+  auto entries = immutable_mem_table_->get_all_entries();
 
   // 3. 写入 SSTable 文件
   auto sstable = std::make_unique<core::SSTable>(filename);
@@ -173,8 +196,8 @@ void KVStore::maybe_flush() {
   // 4. 添加到 SSTable 列表
   sstables_.emplace_back(std::move(sstable));
 
-  // 5. 清空 MemTable 和 WAL
-  mem_table_.clear();
+  // 5. 清空 Immutable MemTable 和 WAL
+  immutable_mem_table_.reset();
   wal_->clear();
 }
 
@@ -185,13 +208,13 @@ bool KVStore::write_to_wal_and_memtable(const core::Entry &entry) {
 
   // 再写 MemTable（使用 Entry 中的时间戳）
   if (entry.type == core::OpType::PUT) {
-    mem_table_.put(entry.key, entry.value, entry.timestamp);
+    mem_table_->put(entry.key, entry.value, entry.timestamp);
   } else {
-    mem_table_.remove(entry.key, entry.timestamp);
+    mem_table_->remove(entry.key, entry.timestamp);
   }
 
   // 检查是否需要 Flush
-  if (mem_table_.total_encoded_size() >= THRESHOLD)
+  if (mem_table_->total_encoded_size() >= flush_threshold_)
     maybe_flush();
 
   return true;
@@ -210,8 +233,9 @@ bool KVStore::exists(const std::string &key) const {
 }
 
 void KVStore::clear() {
-  // 1. 清空 MemTable
-  mem_table_.clear();
+  // 1. 清空 MemTable 和 Immutable MemTable
+  mem_table_->clear();
+  immutable_mem_table_.reset();
 
   // 2. 清空 WAL
   wal_->clear();
@@ -235,11 +259,22 @@ std::vector<std::string> KVStore::keys() const {
 
   // 1. 从 MemTable 获取所有 key（优先，最新数据）
   // 墓碑 key 也要加入 seen，阻止旧 SSTable 中的同名 key 出现
-  auto mem_entries = mem_table_.get_all_entries();
+  auto mem_entries = mem_table_->get_all_entries();
   for (const auto &entry : mem_entries) {
     seen.insert(entry.key);
     if (!entry.is_tombstone()) {
       result.emplace_back(entry.key);
+    }
+  }
+
+  // 从 Immutable MemTable 获取 key（优先级仅次于活跃 MemTable）
+  if (immutable_mem_table_) {
+    auto immutable_entries = immutable_mem_table_->get_all_entries();
+    for (const auto &entry : immutable_entries) {
+      seen.insert(entry.key);
+      if (!entry.is_tombstone()) {
+        result.emplace_back(entry.key);
+      }
     }
   }
 
@@ -260,6 +295,12 @@ std::vector<std::string> KVStore::keys() const {
   return result;
 }
 
-size_t KVStore::size() const { return keys().size(); }
+size_t KVStore::mem_usage() const {
+  size_t total = mem_table_->total_encoded_size();
+  if (immutable_mem_table_)
+    total += immutable_mem_table_->total_encoded_size();
+
+  return total;
+}
 
 } // namespace x1nglsm

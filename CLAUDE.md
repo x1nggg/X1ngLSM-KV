@@ -75,14 +75,16 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 3. 每次写入后检查 MemTable 序列化大小，达到 32MB 阈值时触发 `maybe_flush()`
 
 **读取流程**（`KVStore::get`）：
-1. 查 MemTable 内部 `table_`（`SkipList`），key 存在时：若为 DELETE 墓碑立即返回 `nullopt`，若为 PUT 返回值
-2. MemTable 中无该 key 时，遍历 SSTable 列表（从新到旧），先通过 Bloom Filter 预检查（`may_contain`）快速跳过不可能包含该 key 的 SSTable，通过后二分查找 key，遇到 DELETE 墓碑立即短路返回 `nullopt`
-3. 全部未找到则返回 `nullopt`
+1. 查活跃 MemTable 内部 `table_`（`SkipList`），key 存在时：若为 DELETE 墓碑立即返回 `nullopt`，若为 PUT 返回值
+2. 活跃 MemTable 中无该 key 时，查 Immutable MemTable（如果存在），同样处理墓碑
+3. Immutable MemTable 中也无该 key 时，遍历 SSTable 列表（从新到旧），先通过 Bloom Filter 预检查（`may_contain`）快速跳过不可能包含该 key 的 SSTable，通过后二分查找 key，遇到 DELETE 墓碑立即短路返回 `nullopt`
+4. 全部未找到则返回 `nullopt`
 
 **Flush 流程**（`KVStore::maybe_flush`）：
-1. 调用 `SSTable::write_from_entries()` 将 MemTable 所有 Entry 写入磁盘
-2. 调用 `WAL::clear()` 清空 WAL
-3. 调用 `MemTable::clear()` 清空内存表
+1. 如果已有 Immutable MemTable（上一轮还没 flush 完），先调用 `flush_immutable()` 将其写入 SSTable
+2. 将当前活跃 MemTable move 给 Immutable MemTable（`std::unique_ptr` 所有权转移，O(1)）
+3. 创建新的空 MemTable 继续接收写入（写入路径不阻塞）
+4. 调用 `flush_immutable()` 将 Immutable MemTable 写入 SSTable，然后清空 Immutable MemTable 和 WAL
 
 **崩溃恢复流程**（`KVStore` 构造函数）：
 1. `recover_sstables()`：扫描 `sstables/` 目录，加载已有 SSTable 文件
@@ -154,7 +156,7 @@ data/
 
 | 约束         | 值                                                                     | 说明                                                                           |
 | ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Flush 阈值   | 32 MB                                                                  | `static constexpr size_t THRESHOLD`，MemTable 序列化大小达到此值触发           |
+| Flush 阈值   | 默认 32 MB（可配置）                                                   | 构造函数参数 `flush_threshold_`，MemTable 序列化大小达到此值触发               |
 | SSTable 编号 | 全局递增 uint64_t                                                      | `next_sst_id_` 控制                                                            |
 | 时间戳       | 全局递增 uint64_t                                                      | `MemTable::next_timestamp_` 从 1 开始，WAL 恢复后通过 `advance_timestamp` 校正 |
 | 依赖         | CMake 3.28+，C++17 编译器（GCC 13+ / Clang 16+），clang-format（可选） |

@@ -7,8 +7,8 @@
 ### 构造与析构
 
 ```cpp
-// 打开或创建数据库，传入数据目录路径，自动从 SSTable 和 WAL 恢复
-explicit KVStore(std::string db_dir);
+// 打开或创建数据库，传入数据目录路径和可选的 flush 阈值（默认 32MB），自动从 SSTable 和 WAL 恢复
+explicit KVStore(std::string db_dir, size_t flush_threshold = 32 * 1024 * 1024);
 
 // 不可拷贝
 KVStore(const KVStore&) = delete;
@@ -63,7 +63,7 @@ size_t size() const;
 // SSTable 文件数量
 size_t sstables_count() const;
 
-// MemTable 内存使用（字节）
+// MemTable 内存使用（字节），包含活跃 MemTable 和 Immutable MemTable
 size_t mem_usage() const;
 
 // WAL 文件大小（字节）

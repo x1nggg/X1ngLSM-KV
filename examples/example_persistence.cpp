@@ -40,10 +40,9 @@ void run_first_session() {
   std::cout << "   Key 数量: " << store.size() << "\n";
   std::cout << "   SSTable 数量: " << store.sstables_count() << "\n";
 
-  // 5. 触发 Flush（通过写入足够多的数据）
+  // 5. 触发 Flush（通过写入大值数据）
   std::cout << "\n4. 触发 Flush 机制...\n";
-  std::cout << "   (当前 THRESHOLD 设置为 100 字节用于测试)\n";
-  std::cout << "   写入更多数据以触发 Flush...\n";
+  std::cout << "   写入大值数据以触发 Flush (默认阈值 32MB)...\n";
 
   // 写入足够多的数据触发 Flush
   for (int i = 21; i <= 50; ++i) {
