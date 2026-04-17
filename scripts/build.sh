@@ -84,15 +84,19 @@ if [ $? -eq 0 ]; then
     echo -e "${GREEN}=== 构建成功 ===${NC}"
     echo
     echo "可执行文件位置:"
-    echo "  - CLI: ${BUILD_DIR}/bin/cli/x1nglsm-cli"
-    echo "  - 示例: ${BUILD_DIR}/bin/examples/"
-    echo "  - 测试: ${BUILD_DIR}/test/"
+    echo "  - CLI: ${PROJECT_ROOT}/bin/cli/x1nglsm-cli"
+    echo "  - 示例: ${PROJECT_ROOT}/bin/examples/"
+    echo "  - 测试: ${PROJECT_ROOT}/bin/test/"
     echo
 
     # 运行测试
     if [ "$RUN_TESTS" = true ]; then
         echo -e "${YELLOW}运行测试...${NC}"
-        ctest --output-on-failure
+        for test_bin in "${PROJECT_ROOT}/bin/test/"test_*; do
+            if [ -x "$test_bin" ]; then
+                "$test_bin"
+            fi
+        done
     fi
 else
     echo -e "${RED}=== 构建失败 ===${NC}"

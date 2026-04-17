@@ -1,9 +1,8 @@
 #pragma once
 
-#include "x1nglsm/core/entry.hpp"
 #include "x1nglsm/core/bloom_filter.hpp"
+#include "x1nglsm/core/entry.hpp"
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,7 +10,7 @@
 
 namespace x1nglsm::core {
 
-// 索引项：记录key和对应的文件偏移量
+// 索引项：记录 key 和对应的数据偏移量（v3 指向解压缓冲区，v1/v2 指向文件偏移）
 struct IndexEntry {
   std::string key;
   uint64_t offset;
@@ -26,7 +25,7 @@ struct SSTableFooter {
   uint32_t num_entries;
   // 数据区结束位置
   uint64_t data_end_offset;
-  // 版本号，未来文件格式升级时可以兼容旧版本
+  // 版本号：v1=初始格式，v2=增加 Bloom Filter，v3=数据区 LZ4 压缩
   uint32_t version;
   // 数据完整性校验，防止文件损坏
   uint32_t checksum;
@@ -62,15 +61,26 @@ public:
   size_t num_entries() const { return index_.size(); }
 
 private:
+  // 惰性加载索引区和 Bloom Filter
   bool load_index() const;
+
+  // 惰性加载并解压数据区（仅 v3）
+  bool load_data() const;
 
   uint32_t compute_checksum(const std::string &data) const;
 
+  // SSTable 文件路径
   std::string file_path_;
-
+  // 索引项缓存
   mutable std::vector<IndexEntry> index_;
-
+  // Bloom Filter 缓存
   mutable BloomFilter bloom_filter_;
+  // 解压后的数据区缓存
+  mutable std::string decompressed_data_;
+  // 数据区是否已加载并解压
+  mutable bool data_loaded_ = false;
+  // 文件版本号（从 Footer 读取）
+  mutable uint32_t version_ = 0;
 };
 
 } // namespace x1nglsm::core

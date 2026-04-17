@@ -15,15 +15,19 @@ set(EXAMPLE_SOURCES
 # 示例 1: 基础操作示例
 add_executable(example_basic example_basic.cpp ${EXAMPLE_SOURCES})
 target_include_directories(example_basic PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(example_basic PRIVATE lz4)
 
 # 示例 2: 批量操作示例
 add_executable(example_batch example_batch.cpp ${EXAMPLE_SOURCES})
 target_include_directories(example_batch PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(example_batch PRIVATE lz4)
 
 # 示例 3: 持久化和恢复示例
 add_executable(example_persistence example_persistence.cpp ${EXAMPLE_SOURCES})
 target_include_directories(example_persistence PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(example_persistence PRIVATE lz4)
 
 # 示例 4: 通配符查询示例
 add_executable(example_wildcard example_wildcard.cpp ${EXAMPLE_SOURCES})
 target_include_directories(example_wildcard PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(example_wildcard PRIVATE lz4)

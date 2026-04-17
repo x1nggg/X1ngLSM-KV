@@ -1,6 +1,8 @@
 #include "x1nglsm/core/sstable.hpp"
 #include "x1nglsm/core/bloom_filter.hpp"
 
+#include "lz4.h"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -8,29 +10,50 @@
 
 namespace x1nglsm::core {
 
+// 从 Entry 列表创建 SSTable 文件（v3 格式）
+// 文件布局：[压缩数据区] → [索引区] → [Bloom Filter 区] → [Footer]
+// 压缩数据区格式：[原始大小(4)][压缩大小(4)][LZ4 压缩数据]
+// 索引区格式：每条 [key_len(4)][key][offset(8)][type(1)]，offset
+// 指向解压后缓冲区
 bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
   std::ofstream file(file_path_, std::ios::binary);
   if (!file)
     return false;
 
-  std::vector<uint64_t> offsets; // 记录每个 Entry 的偏移量
-
-  // 1.写入所有 Entry（格式：长度 + 数据）
+  // 1.序列化所有 Entry 到内存缓冲区
+  std::vector<uint64_t> offsets; // 记录每个 Entry 在缓冲区内的偏移量
+  std::string data_buffer;
   for (const auto &entry : entries) {
-    uint64_t offset = file.tellp();
+    uint64_t offset = data_buffer.size();
     offsets.emplace_back(offset);
 
     std::string data = entry.encode();
     auto len = static_cast<uint32_t>(data.size());
 
-    file.write(reinterpret_cast<const char *>(&len), sizeof(len));
-    file.write(data.data(), data.size());
+    data_buffer.append(reinterpret_cast<const char *>(&len), sizeof(len));
+    data_buffer.append(data);
   }
+
+  // 2. LZ4 压缩
+  int max_size = LZ4_compressBound(static_cast<int>(data_buffer.size()));
+  std::string compressed(max_size, '\0');
+  int compressed_size =
+      LZ4_compress_default(data_buffer.data(), compressed.data(),
+                           static_cast<int>(data_buffer.size()), max_size);
+  compressed.resize(compressed_size);
+
+  // 3. 写入压缩数据区
+  auto uncompressed_size = static_cast<uint32_t>(data_buffer.size());
+  auto comp_size = static_cast<uint32_t>(compressed_size);
+  file.write(reinterpret_cast<const char *>(&uncompressed_size),
+             sizeof(uncompressed_size));
+  file.write(reinterpret_cast<const char *>(&comp_size), sizeof(comp_size));
+  file.write(compressed.data(), compressed_size);
 
   // 记录数据区结束位置（即索引区开始位置）
   std::streampos data_end = file.tellp();
 
-  // 2.写入索引区
+  // 4.写入索引区
   // 格式：[key_len(4) + key + offset(8) + type(1)]
   for (size_t i = 0; i < entries.size(); ++i) {
     const std::string &key = entries[i].key;
@@ -44,19 +67,19 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
     file.write(reinterpret_cast<const char *>(&type_byte), sizeof(type_byte));
   }
 
-  // 3.写入 Bloom Filter
-  // 3.1 收集所有 key
+  // 5.写入 Bloom Filter
+  // 5.1 收集所有 key
   std::vector<std::string> keys;
   keys.reserve(entries.size());
   for (const auto &entry : entries) {
     keys.emplace_back(entry.key);
   }
 
-  // 3.2 构建 Bloom Filter
+  // 5.2 构建 Bloom Filter
   bloom_filter_ = BloomFilter(entries.size());
   bloom_filter_.add_all(keys);
 
-  // 3.3 序列化 Bloom Filter 并写入文件
+  // 5.3 序列化 Bloom Filter 并写入文件
   std::string bf_data = bloom_filter_.serialize();
   // 记录 Bloom Filter 区起始偏移 (用于 Footer 的 reserved 字段）
   uint64_t bloom_offset = static_cast<uint64_t>(file.tellp());
@@ -65,12 +88,12 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
   file.write(reinterpret_cast<const char *>(&bf_size), sizeof(bf_size));
   file.write(bf_data.data(), bf_data.size());
 
-  // 4.写入 Footer
+  // 6.写入 Footer
   SSTableFooter footer{};
   std::memcpy(footer.magic, "SST\0", 4);
   footer.num_entries = static_cast<uint32_t>(entries.size());
   footer.data_end_offset = static_cast<uint64_t>(data_end);
-  footer.version = 2;
+  footer.version = 3;
   footer.checksum = 0; // MVP阶段暂不实现，直接设为0
   footer.reserved = static_cast<uint32_t>(bloom_offset);
   file.write(reinterpret_cast<const char *>(&footer), sizeof(footer));
@@ -97,23 +120,32 @@ std::optional<std::string> SSTable::get(const std::string &key) const {
     return std::nullopt;
 
   // 根据 offset 读取 Entry
-  std::ifstream file(file_path_, std::ios::binary);
-  if (!file)
-    return std::nullopt;
+  std::optional<Entry> entry_opt;
 
-  // 跳到 Entry 位置
-  file.seekg(it->offset);
+  if (version_ >= 3) {
+    // v3：从解压缓冲区读取
+    if (!load_data())
+      return std::nullopt;
 
-  // 读取长度
-  uint32_t len;
-  file.read(reinterpret_cast<char *>(&len), sizeof(len));
+    const char *ptr = decompressed_data_.data() + it->offset;
+    uint32_t len;
+    std::memcpy(&len, ptr, sizeof(len));
+    std::string data(ptr + sizeof(len), len);
+    entry_opt = Entry::decode(data);
+  } else {
+    // v1/v2：从文件直接读取
+    std::ifstream file(file_path_, std::ios::binary);
+    if (!file)
+      return std::nullopt;
 
-  // 读取 Entry 数据
-  std::string data(len, '\0');
-  file.read(data.data(), len);
+    file.seekg(it->offset);
+    uint32_t len;
+    file.read(reinterpret_cast<char *>(&len), sizeof(len));
+    std::string data(len, '\0');
+    file.read(data.data(), len);
+    entry_opt = Entry::decode(data);
+  }
 
-  // 解码 Entry
-  auto entry_opt = Entry::decode(data);
   if (!entry_opt.has_value())
     return std::nullopt;
 
@@ -207,7 +239,7 @@ bool SSTable::load_index() const {
   }
 
   // 加载 Bloom Filter
-  if (footer.version == 2 && footer.reserved > 0) {
+  if (footer.version >= 2 && footer.reserved > 0) {
     file.seekg(footer.reserved);
     uint32_t bf_size;
     file.read(reinterpret_cast<char *>(&bf_size), sizeof(bf_size));
@@ -216,6 +248,54 @@ bool SSTable::load_index() const {
     bloom_filter_ = BloomFilter::deserialize(bf_data);
   }
 
+  version_ = footer.version;
+  return true;
+}
+
+bool SSTable::load_data() const {
+  if (data_loaded_)
+    return true;
+
+  // 读取压缩数据
+  std::ifstream file(file_path_, std::ios::binary);
+  if (!file)
+    return false;
+
+  // 读取 Footer 获取 data_end_offset
+  file.seekg(-static_cast<int>(sizeof(SSTableFooter)), std::ios::end);
+  SSTableFooter footer{};
+  file.read(reinterpret_cast<char *>(&footer), sizeof(footer));
+  if (std::memcmp(footer.magic, "SST\0", 4) != 0)
+    return false;
+
+  if (footer.version < 3) {
+    // v1/v2 数据区未压缩，由 get() 直接从文件 seek 读取
+    return false;
+  }
+
+  // v3: seek 到文件开头读取压缩数据区
+  file.seekg(0, std::ios::beg);
+
+  uint32_t uncompressed_size; // 原始数据大小
+  file.read(reinterpret_cast<char *>(&uncompressed_size),
+            sizeof(uncompressed_size));
+
+  uint32_t compressed_size; // 压缩数据大小
+  file.read(reinterpret_cast<char *>(&compressed_size),
+            sizeof(compressed_size));
+
+  std::string compressed_data(compressed_size, '\0'); // 压缩数据
+  file.read(compressed_data.data(), compressed_size);
+
+  // 解压
+  decompressed_data_.resize(uncompressed_size);
+  int result = LZ4_decompress_safe(
+      compressed_data.data(), decompressed_data_.data(),
+      static_cast<int>(compressed_size), static_cast<int>(uncompressed_size));
+  if (result < 0)
+    return false;
+
+  data_loaded_ = true;
   return true;
 }
 

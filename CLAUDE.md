@@ -111,12 +111,13 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - 跨平台支持：Windows 用 `_commit()`，Linux/macOS 用 `fsync()`
 
 **SSTable**（`src/core/sstable.cpp`）：
-- 文件布局（v2）：数据区 → 索引区 → Bloom Filter 区 → Footer（固定大小）
-- 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找
+- 文件布局（v3）：压缩数据区 → 索引区 → Bloom Filter 区 → Footer（固定大小）
+- 数据区使用 LZ4 压缩，格式为 `[原始大小(4字节)][压缩大小(4字节)][压缩数据]`
+- 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找，偏移量指向解压后缓冲区
 - Bloom Filter 区：`[bf_size(4字节)][bf_data]`，存储序列化后的 Bloom Filter，用于查询前预检查
-- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v2）、Bloom Filter 区起始偏移（`reserved` 字段）
-- v1 文件（无 Bloom Filter）仍可正常读取，默认 Bloom Filter 对所有 key 返回 true
-- `index_entries()` 惰性加载（首次访问时从磁盘读取索引区和 Bloom Filter），结果缓存在 `mutable` 成员中
+- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v3）、Bloom Filter 区起始偏移（`reserved` 字段）
+- 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
+- `load_index()` 惰性加载索引区和 Bloom Filter，`load_data()` 惰性加载并解压数据区，结果缓存在 `mutable` 成员中
 
 **Entry 序列化格式**（小端序）：
 ```
@@ -133,13 +134,14 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 data/
 ├── wal.log                    # WAL 文件
 └── sstables/
-    ├── sstable_000001.sst     # SSTable 文件（按创建顺序编号）
+    ├── 1.sst                  # SSTable 文件（按 ID 递增编号）
     └── ...
 ```
 
 ## 构建系统说明
 
-- **CMake 3.28+**，C++17
+- **CMake 3.28+**，C/C++17（C 用于 LZ4 库编译）
+- 第三方库 LZ4 以源码形式内嵌在 `third_party/lz4/`，编译为静态库链接
 - 测试目标直接链接所需源文件（不链接库），每个测试在 `test/CMakeLists.txt` 中独立声明
 - 可执行文件输出目录：CLI → `bin/cli/`，测试 → `bin/test/`，示例 → `bin/examples/`
 - 头文件在 `include/` 下，与 `src/` 目录结构对应
@@ -159,4 +161,4 @@ data/
 | Flush 阈值   | 默认 32 MB（可配置）                                                   | 构造函数参数 `flush_threshold_`，MemTable 序列化大小达到此值触发               |
 | SSTable 编号 | 全局递增 uint64_t                                                      | `next_sst_id_` 控制                                                            |
 | 时间戳       | 全局递增 uint64_t                                                      | `MemTable::next_timestamp_` 从 1 开始，WAL 恢复后通过 `advance_timestamp` 校正 |
-| 依赖         | CMake 3.28+，C++17 编译器（GCC 13+ / Clang 16+），clang-format（可选） |
+| 依赖         | CMake 3.28+，C++17 编译器（GCC 13+ / Clang 16+），clang-format（可选），LZ4（内嵌 third_party/lz4） |

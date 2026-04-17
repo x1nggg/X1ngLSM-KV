@@ -27,6 +27,7 @@ set(TEST_KVSTORE_SRC_LIST test_kv_store.cpp
     ${PROJECT_SOURCE_DIR}/src/kv_store.cpp
     )
 add_executable(test_kv_store ${TEST_KVSTORE_SRC_LIST})
+target_link_libraries(test_kv_store PRIVATE lz4)
 
 # BloomFilter模块测试
 set(TEST_BLOOM_FILTER_SRC_LIST test_bloom_filter.cpp

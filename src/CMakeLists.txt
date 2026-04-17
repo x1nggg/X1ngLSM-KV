@@ -18,3 +18,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/cli)
 
 # 编译主程序（cli/cli.cpp 是入口）
 add_executable(x1nglsm-cli ${CLI_SRC_LIST})
+
+# 链接 LZ4 库
+target_link_libraries(x1nglsm-cli PRIVATE lz4)

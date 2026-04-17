@@ -81,12 +81,13 @@ struct Entry {
 
 ### SSTable — 磁盘有序表
 
-文件布局（v2）：
+文件布局（v3）：
 
 ```
 ┌──────────────────────────────────┐
-│           数据区                  │
-│  [Entry1][Entry2]...[EntryN]     │
+│        压缩数据区 (LZ4)           │
+│  [原始大小(4)][压缩大小(4)]       │
+│  [压缩数据]                      │
 ├──────────────────────────────────┤
 │           索引区                  │
 │  [IndexEntry1]...[IndexEntryN]   │
@@ -101,13 +102,13 @@ struct Entry {
 └──────────────────────────────────┘
 ```
 
-- **数据区**：按 key 有序存储的 Entry 列表
-- **索引区**：每条记录 key 和对应的数据区偏移量，支持二分查找
+- **压缩数据区**：Entry 列表序列化后用 LZ4 压缩，索引中的偏移量指向解压后缓冲区
+- **索引区**：每条记录 key 和对应的数据偏移量，支持二分查找
 - **Bloom Filter 区**：序列化后的 Bloom Filter，查询前预检查，跳过不存在的 key
-- **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、版本号（v2）、Bloom Filter 区偏移（`reserved` 字段）等
-- v1 文件（无 Bloom Filter）仍可正常读取
+- **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、版本号（v3）、Bloom Filter 区偏移（`reserved` 字段）等
+- 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
 
-读取流程：加载 Footer → 定位索引区和 Bloom Filter → Bloom Filter 预检查 → 二分查找 key → 按偏移量读取数据。
+读取流程：加载 Footer → 定位索引区和 Bloom Filter → Bloom Filter 预检查 → 二分查找 key → v3 从解压缓冲区读取 Entry / v1/v2 从文件 seek 读取。
 
 ### BloomFilter — 布隆过滤器
 
@@ -204,3 +205,4 @@ data/
 | 时间戳       | 全局递增 uint64_t                                               | MemTable 内维护 `next_timestamp_`     |
 | 命名空间     | `x1nglsm` / `x1nglsm::core` / `x1nglsm::cli` / `x1nglsm::utils` | —                                     |
 | C++ 标准     | C++17                                                           | —                                     |
+| 压缩算法     | LZ4（内嵌 third_party/lz4）                                     | SSTable 数据区压缩                    |

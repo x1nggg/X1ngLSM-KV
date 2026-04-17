@@ -470,6 +470,109 @@ bool test_immutable_and_active() {
     return true;
 }
 
+// test_sstable_compression - 测试 LZ4 压缩后数据正确读取
+bool test_sstable_compression() {
+    std::string test_dir = "./data/test/test_sstable_compression";
+    cleanup_test_dir(test_dir);
+
+    {
+        KVStore store(test_dir, 1024);
+
+        // 写入触发 flush，数据进入压缩的 SSTable
+        store.put("apple", "red");
+        store.put("banana", "yellow");
+        store.put("cherry", std::string(1024, 'c')); // 触发 flush
+
+        // 验证压缩后的 SSTable 能正确读取
+        auto r1 = store.get("apple");
+        auto r2 = store.get("banana");
+        auto r3 = store.get("cherry");
+        if (!r1.has_value() || r1.value() != "red") return false;
+        if (!r2.has_value() || r2.value() != "yellow") return false;
+        if (!r3.has_value() || r3.value() != std::string(1024, 'c')) return false;
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
+// test_compression_ratio - 测试 LZ4 对重复数据的压缩效果
+bool test_compression_ratio() {
+    std::string test_dir = "./data/test/test_compression_ratio";
+    cleanup_test_dir(test_dir);
+
+    {
+        KVStore store(test_dir, 1024);
+
+        // 写入大量重复数据（LZ4 对重复数据压缩效果最好）
+        std::string repeat_value(512, 'A'); // 512 字节全 A
+        for (int i = 0; i < 10; i++) {
+            store.put("key" + std::to_string(i), repeat_value);
+        }
+        // 触发 flush
+        store.put("trigger", std::string(1024, 'T'));
+
+        // 验证数据可读
+        for (int i = 0; i < 10; i++) {
+            auto r = store.get("key" + std::to_string(i));
+            if (!r.has_value() || r.value() != repeat_value) return false;
+        }
+
+        // 检查 SSTable 文件大小：原始数据约 5KB+，压缩后应明显更小
+        if (store.sstables_count() < 1) return false;
+
+        std::string sst_dir = test_dir + "/sstables";
+        for (const auto &entry : std::filesystem::directory_iterator(sst_dir)) {
+            if (entry.path().extension() == ".sst") {
+                auto file_size = std::filesystem::file_size(entry.path());
+                // 索引区 + Bloom Filter + Footer 约 1KB，数据区原始 ~6KB
+                // 压缩后整个文件应远小于原始数据大小（6KB）
+                if (file_size >= 6 * 1024) return false;
+            }
+        }
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
+// test_compression_large_data - 测试大 value 压缩/解压正确性
+bool test_compression_large_data() {
+    std::string test_dir = "./data/test/test_compress_large";
+    cleanup_test_dir(test_dir);
+
+    {
+        KVStore store(test_dir, 4096);
+
+        // 写入多种不同 pattern 的大 value
+        std::string pattern_a(2048, 'A');
+        std::string pattern_b(2048, 'B');
+        std::string pattern_c(2048, 'C');
+
+        store.put("pa", pattern_a);
+        store.put("pb", pattern_b);
+        store.put("pc", pattern_c);
+
+        // 触发 flush
+        store.put("trigger", std::string(4096, 'X'));
+
+        // 逐个验证解压正确性
+        auto ra = store.get("pa");
+        auto rb = store.get("pb");
+        auto rc = store.get("pc");
+        if (!ra.has_value() || ra.value() != pattern_a) return false;
+        if (!rb.has_value() || rb.value() != pattern_b) return false;
+        if (!rc.has_value() || rc.value() != pattern_c) return false;
+
+        // 验证 trigger 本身
+        auto rt = store.get("trigger");
+        if (!rt.has_value() || rt.value() != std::string(4096, 'X')) return false;
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
 // ========== 主函数 ==========
 
 int main() {
@@ -499,6 +602,9 @@ int main() {
             {"test_recovery_timestamp_correctness", test_recovery_timestamp_correctness},
             {"test_immutable_flush",                 test_immutable_flush},
             {"test_immutable_and_active",            test_immutable_and_active},
+            {"test_sstable_compression",             test_sstable_compression},
+            {"test_compression_ratio",               test_compression_ratio},
+            {"test_compression_large_data",          test_compression_large_data},
     };
 
     int num_tests = sizeof(tests) / sizeof(tests[0]);
@@ -540,6 +646,9 @@ int main() {
     cleanup_test_dir("./data/test/test_recovery_timestamp");
     cleanup_test_dir("./data/test/test_immutable_flush");
     cleanup_test_dir("./data/test/test_immutable_active");
+    cleanup_test_dir("./data/test/test_sstable_compression");
+    cleanup_test_dir("./data/test/test_compression_ratio");
+    cleanup_test_dir("./data/test/test_compress_large");
 
     return (passed == total) ? 0 : 1;
 }
