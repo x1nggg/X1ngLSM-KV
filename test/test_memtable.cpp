@@ -1,4 +1,5 @@
 #include "x1nglsm/core/mem_table.hpp"
+
 #include <iostream>
 #include <cassert>
 #include <string>

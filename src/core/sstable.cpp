@@ -13,8 +13,7 @@ namespace x1nglsm::core {
 // 从 Entry 列表创建 SSTable 文件（v3 格式）
 // 文件布局：[压缩数据区] → [索引区] → [Bloom Filter 区] → [Footer]
 // 压缩数据区格式：[原始大小(4)][压缩大小(4)][LZ4 压缩数据]
-// 索引区格式：每条 [key_len(4)][key][offset(8)][type(1)]，offset
-// 指向解压后缓冲区
+// 索引区格式：每条 [key_len(4)][key][offset(8)][type(1)]，offset 指向解压后缓冲区
 bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
   std::ofstream file(file_path_, std::ios::binary);
   if (!file)
@@ -49,6 +48,9 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
              sizeof(uncompressed_size));
   file.write(reinterpret_cast<const char *>(&comp_size), sizeof(comp_size));
   file.write(compressed.data(), compressed_size);
+
+  // 对压缩数据计算 checksum
+  uint32_t checksum = compute_checksum(compressed);
 
   // 记录数据区结束位置（即索引区开始位置）
   std::streampos data_end = file.tellp();
@@ -94,7 +96,7 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
   footer.num_entries = static_cast<uint32_t>(entries.size());
   footer.data_end_offset = static_cast<uint64_t>(data_end);
   footer.version = 3;
-  footer.checksum = 0; // MVP阶段暂不实现，直接设为0
+  footer.checksum = checksum;
   footer.reserved = static_cast<uint32_t>(bloom_offset);
   file.write(reinterpret_cast<const char *>(&footer), sizeof(footer));
 
@@ -256,7 +258,6 @@ bool SSTable::load_data() const {
   if (data_loaded_)
     return true;
 
-  // 读取压缩数据
   std::ifstream file(file_path_, std::ios::binary);
   if (!file)
     return false;
@@ -287,6 +288,14 @@ bool SSTable::load_data() const {
   std::string compressed_data(compressed_size, '\0'); // 压缩数据
   file.read(compressed_data.data(), compressed_size);
 
+  // 校验 checksum
+  uint32_t checksum = compute_checksum(compressed_data);
+  if (footer.checksum != checksum) {
+    std::cerr << "[Warning] SSTable::load_data: checksum mismatch in file: "
+              << file_path_ << std::endl;
+    return false;
+  }
+
   // 解压
   decompressed_data_.resize(uncompressed_size);
   int result = LZ4_decompress_safe(
@@ -297,11 +306,6 @@ bool SSTable::load_data() const {
 
   data_loaded_ = true;
   return true;
-}
-
-uint32_t SSTable::compute_checksum(const std::string &data) const {
-  // TODO MVP 暂不实现校验和
-  return 0;
 }
 
 } // namespace x1nglsm::core

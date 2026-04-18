@@ -1,4 +1,5 @@
 #include "x1nglsm/core/entry.hpp"
+
 #include <cassert>
 #include <iostream>
 #include <string>

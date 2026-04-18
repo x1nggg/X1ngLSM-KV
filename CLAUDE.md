@@ -115,7 +115,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - 数据区使用 LZ4 压缩，格式为 `[原始大小(4字节)][压缩大小(4字节)][压缩数据]`
 - 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找，偏移量指向解压后缓冲区
 - Bloom Filter 区：`[bf_size(4字节)][bf_data]`，存储序列化后的 Bloom Filter，用于查询前预检查
-- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v3）、Bloom Filter 区起始偏移（`reserved` 字段）
+- Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v3）、CRC32 校验和、Bloom Filter 区起始偏移（`reserved` 字段）
 - 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
 - `load_index()` 惰性加载索引区和 Bloom Filter，`load_data()` 惰性加载并解压数据区，结果缓存在 `mutable` 成员中
 

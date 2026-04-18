@@ -2,6 +2,7 @@
 
 #include "x1nglsm/core/bloom_filter.hpp"
 #include "x1nglsm/core/entry.hpp"
+#include "x1nglsm/utils/crc32.hpp"
 
 #include <optional>
 #include <string>
@@ -23,11 +24,11 @@ struct SSTableFooter {
   char magic[4];
   // 记录文件中有多少个 Entry，用于读取时验证完整性
   uint32_t num_entries;
-  // 数据区结束位置
+  // 压缩数据区结束位置（即索引区起始位置）
   uint64_t data_end_offset;
   // 版本号：v1=初始格式，v2=增加 Bloom Filter，v3=数据区 LZ4 压缩
   uint32_t version;
-  // 数据完整性校验，防止文件损坏
+  // CRC32 校验和，对压缩数据区计算，用于检测文件损坏
   uint32_t checksum;
   // 预留字段，目前用于记录 Bloom Filter 区的起始偏移，未来可以扩展其他元数据
   uint32_t reserved;
@@ -67,7 +68,10 @@ private:
   // 惰性加载并解压数据区（仅 v3）
   bool load_data() const;
 
-  uint32_t compute_checksum(const std::string &data) const;
+  // 计算数据的 CRC32 校验和
+  uint32_t compute_checksum(const std::string &data) const {
+    return utils::crc32(data);
+  }
 
   // SSTable 文件路径
   std::string file_path_;

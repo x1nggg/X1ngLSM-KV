@@ -1,4 +1,6 @@
 #include "x1nglsm/kv_store.hpp"
+
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -573,6 +575,57 @@ bool test_compression_large_data() {
     return true;
 }
 
+// test_sstable_checksum - 测试 CRC32 校验能检测到文件损坏
+bool test_sstable_checksum() {
+    std::string test_dir = "./data/test/test_checksum";
+    cleanup_test_dir(test_dir);
+
+    {
+        // 写入数据并触发 flush，产生 SSTable 文件
+        KVStore store(test_dir, 256);
+        store.put("key1", "value1");
+        store.put("key2", std::string(256, 'A')); // 触发 flush
+
+        // 正常读取验证
+        auto r1 = store.get("key1");
+        if (!r1.has_value() || r1.value() != "value1") return false;
+        auto r2 = store.get("key2");
+        if (!r2.has_value() || r2.value() != std::string(256, 'A')) return false;
+    }
+
+    // 篡改 SSTable 文件中间的一个字节
+    std::string sst_dir = test_dir + "/sstables";
+    for (const auto &entry : std::filesystem::directory_iterator(sst_dir)) {
+        if (entry.path().extension() == ".sst") {
+            std::string sst_path = entry.path().string();
+            // 打开文件，篡改压缩数据区中间的一个字节
+            std::fstream file(sst_path, std::ios::in | std::ios::out | std::ios::binary);
+            if (!file) return false;
+            // 跳过 [原始大小(4)][压缩大小(4)]，篡改压缩数据的第 10 个字节
+            file.seekp(18);
+            char byte;
+            file.read(&byte, 1);
+            byte ^= 0xFF; // 翻转所有位
+            file.seekp(18);
+            file.write(&byte, 1);
+            file.close();
+        }
+    }
+
+    // 重新打开 store，尝试读取被篡改的数据
+    // 注意：以下 get 调用会触发 checksum 校验失败，输出 Warning 是预期行为
+    {
+        KVStore store(test_dir);
+        auto r1 = store.get("key1");
+        if (r1.has_value()) return false; // 应该读不到
+        auto r2 = store.get("key2");
+        if (r2.has_value()) return false; // 应该读不到
+    }
+
+    cleanup_test_dir(test_dir);
+    return true;
+}
+
 // ========== 主函数 ==========
 
 int main() {
@@ -605,6 +658,7 @@ int main() {
             {"test_sstable_compression",             test_sstable_compression},
             {"test_compression_ratio",               test_compression_ratio},
             {"test_compression_large_data",          test_compression_large_data},
+            {"test_sstable_checksum",                test_sstable_checksum},
     };
 
     int num_tests = sizeof(tests) / sizeof(tests[0]);
@@ -649,6 +703,7 @@ int main() {
     cleanup_test_dir("./data/test/test_sstable_compression");
     cleanup_test_dir("./data/test/test_compression_ratio");
     cleanup_test_dir("./data/test/test_compress_large");
+    cleanup_test_dir("./data/test/test_checksum");
 
     return (passed == total) ? 0 : 1;
 }

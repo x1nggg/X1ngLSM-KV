@@ -1,4 +1,5 @@
 #include "x1nglsm/core/write_ahead_log.hpp"
+
 #include <iostream>
 #include <fstream>
 #include <string>
