@@ -47,6 +47,12 @@ public:
   // 读取：根据 key 查找 value
   std::optional<std::string> get(const std::string &key) const;
 
+  // 根据已知偏移量直接读取 Entry 的 value（跳过索引查找和 Bloom Filter）
+  std::optional<std::string> get_value_at(size_t offset) const;
+
+  // Bloom Filter 预检查：key 是否可能存在（轻量，不加载索引）
+  bool may_contain(const std::string &key) const;
+
   // 获取所有存活 key（非墓碑）
   std::vector<std::string> keys() const;
 
@@ -65,8 +71,14 @@ public:
   size_t num_entries() const { return index_.size(); }
 
 private:
-  // 惰性加载索引区和 Bloom Filter
+  // 惰性加载索引区（Bloom Filter 未加载时一并加载）
   bool load_index() const;
+
+  // 惰性加载 Bloom Filter（不加载索引，用于轻量预检查）
+  bool load_bloom_filter() const;
+
+  // 惰性加载并缓存 Footer（只读一次）
+  bool load_footer() const;
 
   // 惰性加载并解压数据区（仅 v3）
   bool load_data() const;
@@ -82,12 +94,16 @@ private:
   mutable std::vector<IndexEntry> index_;
   // Bloom Filter 缓存
   mutable BloomFilter bloom_filter_;
+  // Bloom Filter 是否已加载
+  mutable bool bloom_filter_loaded_ = false;
   // 解压后的数据区缓存
   mutable std::string decompressed_data_;
   // 数据区是否已加载并解压
   mutable bool data_loaded_ = false;
-  // 文件版本号（从 Footer 读取）
-  mutable uint32_t version_ = 0;
+  // Footer 缓存（惰性加载，只读一次）
+  mutable SSTableFooter footer_{};
+  // Footer 是否已加载
+  mutable bool footer_loaded_ = false;
 };
 
 } // namespace x1nglsm::core

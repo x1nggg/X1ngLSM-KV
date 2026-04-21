@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(X1ngLSM-KV VERSION 1.0.0 LANGUAGES C CXX)
+project(X1ngLSM-KV VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17) # 设置语言标准为C++ 17
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # 强制使用支持C++17的编译器，否则报错

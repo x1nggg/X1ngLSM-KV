@@ -2,7 +2,6 @@
 #include "x1nglsm/core/bloom_filter.hpp"
 
 #include "lz4.h"
-#include "x1nglsm/kv_store.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -106,62 +105,62 @@ bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
 }
 
 std::optional<std::string> SSTable::get(const std::string &key) const {
-  // 加载索引
-  if (!load_index())
+  if (!may_contain(key))
     return std::nullopt;
 
-  // Bloom Filter 预检查
-  if (!bloom_filter_.may_contain(key)) {
-    return std::nullopt;
-  }
-
-  // 二分查找 key
-  auto it = std::lower_bound(index_.begin(), index_.end(), key,
+  const auto &entries = index_entries();
+  auto it = std::lower_bound(entries.begin(), entries.end(), key,
                              [](const IndexEntry &entry, const std::string &k) {
                                return entry.key < k;
                              });
-  if (it == index_.end() || it->key != key)
+  if (it == entries.end() || it->key != key)
     return std::nullopt;
 
-  // 根据 offset 读取 Entry
-  std::optional<Entry> entry_opt;
+  return get_value_at(it->offset);
+}
 
-  if (version_ >= 3) {
+std::optional<std::string> SSTable::get_value_at(size_t offset) const {
+  // 根据已知偏移量直接读取 Entry（跳过索引查找和 Bloom Filter）
+
+  if (footer_.version >= 3) {
     // v3：从解压缓冲区读取
     if (!load_data())
       return std::nullopt;
 
-    const char *ptr = decompressed_data_.data() + it->offset;
+    const char *ptr = decompressed_data_.data() + offset;
     uint32_t len;
     std::memcpy(&len, ptr, sizeof(len));
     std::string data(ptr + sizeof(len), len);
 
-    entry_opt = Entry::decode(data);
+    auto entry_opt = Entry::decode(data);
+    if (!entry_opt.has_value())
+      return std::nullopt;
+
+    if (entry_opt->is_tombstone())
+      return std::nullopt;
+
+    return entry_opt->value;
   } else {
     // v1/v2：从文件直接读取
     std::ifstream file(file_path_, std::ios::binary);
     if (!file)
       return std::nullopt;
 
-    file.seekg(it->offset);
+    file.seekg(offset);
     uint32_t len;
     file.read(reinterpret_cast<char *>(&len), sizeof(len));
     std::string data(len, '\0');
     file.read(data.data(), len);
 
-    entry_opt = Entry::decode(data);
+    auto entry_opt = Entry::decode(data);
+    if (!entry_opt.has_value())
+      return std::nullopt;
+
+    if (entry_opt->is_tombstone())
+      return std::nullopt;
+
+    return entry_opt->value;
   }
-
-  if (!entry_opt.has_value())
-    return std::nullopt;
-
-  const Entry &entry = entry_opt.value();
-
-  // 检查是否是墓碑
-  if (entry.is_tombstone())
-    return std::nullopt;
-
-  return entry.value;
 }
 
 std::vector<std::string> SSTable::keys() const {
@@ -201,7 +200,7 @@ std::vector<Entry> SSTable::get_all_entries() const {
   std::vector<Entry> entries;
   entries.reserve(index_.size());
 
-  if (version_ >= 3) {
+  if (footer_.version >= 3) {
     // v3：加载并解压数据区，从解压缓冲区读取
     if (!load_data())
       return {};
@@ -243,9 +242,69 @@ const std::vector<IndexEntry> &SSTable::index_entries() const {
   return index_;
 }
 
+bool SSTable::load_footer() const {
+  if (footer_loaded_)
+    return true;
+
+  std::ifstream file(file_path_, std::ios::binary);
+  if (!file)
+    return false;
+
+  file.seekg(-static_cast<int>(sizeof(SSTableFooter)), std::ios::end);
+  file.read(reinterpret_cast<char *>(&footer_), sizeof(footer_));
+
+  if (std::memcmp(footer_.magic, "SST\0", 4) != 0) {
+    std::cerr << "[Warning] SSTable::load_footer: invalid magic in file: "
+              << file_path_ << std::endl;
+    return false;
+  }
+
+  footer_loaded_ = true;
+  return true;
+}
+
+bool SSTable::load_bloom_filter() const {
+  if (bloom_filter_loaded_)
+    return true;
+
+  if (!load_footer())
+    return false;
+
+  // v1 文件没有 Bloom Filter
+  if (footer_.version < 2 || footer_.reserved == 0) {
+    bloom_filter_loaded_ = true;
+    return true;
+  }
+
+  // 加载 Bloom Filter
+  std::ifstream file(file_path_, std::ios::binary);
+  if (!file)
+    return false;
+
+  file.seekg(footer_.reserved);
+  uint32_t bf_size;
+  file.read(reinterpret_cast<char *>(&bf_size), sizeof(bf_size));
+  std::string bf_data(bf_size, '\0');
+  file.read(bf_data.data(), bf_size);
+  bloom_filter_ = BloomFilter::deserialize(bf_data);
+  bloom_filter_loaded_ = true;
+
+  return true;
+}
+
+bool SSTable::may_contain(const std::string &key) const {
+  if (!load_bloom_filter())
+    return true; // 加载失败，保守返回 true
+
+  return bloom_filter_.may_contain(key);
+}
+
 bool SSTable::load_index() const {
   if (!index_.empty())
     return true;
+
+  if (!load_footer())
+    return false;
 
   std::ifstream file(file_path_, std::ios::binary);
   if (!file) {
@@ -254,23 +313,11 @@ bool SSTable::load_index() const {
     return false;
   }
 
-  // 读取 Footer
-  file.seekg(-static_cast<int>(sizeof(SSTableFooter)), std::ios::end);
-  SSTableFooter footer{};
-  file.read(reinterpret_cast<char *>(&footer), sizeof(footer));
-
-  // 验证 magic
-  if (std::memcmp(footer.magic, "SST\0", 4) != 0) {
-    std::cerr << "[Warning] SSTable::load_index: invalid magic in file: "
-              << file_path_ << std::endl;
-    return false;
-  }
-
   // 跳到索引区起始位置
-  file.seekg(footer.data_end_offset);
+  file.seekg(footer_.data_end_offset);
 
   // 从索引区起始位置开始，逐个读取索引项
-  for (uint32_t i = 0; i < footer.num_entries; ++i) {
+  for (uint32_t i = 0; i < footer_.num_entries; ++i) {
     // 读取：[key_len(4) + key + offset(8) + type(1)]
     uint32_t key_len;
     file.read(reinterpret_cast<char *>(&key_len), sizeof(key_len));
@@ -288,17 +335,17 @@ bool SSTable::load_index() const {
     index_.push_back({key, offset, type});
   }
 
-  // 加载 Bloom Filter
-  if (footer.version >= 2 && footer.reserved > 0) {
-    file.seekg(footer.reserved);
+  // 加载 Bloom Filter（如果尚未加载）
+  if (!bloom_filter_loaded_ && footer_.version >= 2 && footer_.reserved > 0) {
+    file.seekg(footer_.reserved);
     uint32_t bf_size;
     file.read(reinterpret_cast<char *>(&bf_size), sizeof(bf_size));
     std::string bf_data(bf_size, '\0');
     file.read(bf_data.data(), bf_size);
     bloom_filter_ = BloomFilter::deserialize(bf_data);
+    bloom_filter_loaded_ = true;
   }
 
-  version_ = footer.version;
   return true;
 }
 
@@ -306,21 +353,17 @@ bool SSTable::load_data() const {
   if (data_loaded_)
     return true;
 
+  if (!load_footer())
+    return false;
+
+  if (footer_.version < 3) {
+    // v1/v2 数据区未压缩，由 get_value_at() 直接从文件 seek 读取
+    return false;
+  }
+
   std::ifstream file(file_path_, std::ios::binary);
   if (!file)
     return false;
-
-  // 读取 Footer 获取 data_end_offset
-  file.seekg(-static_cast<int>(sizeof(SSTableFooter)), std::ios::end);
-  SSTableFooter footer{};
-  file.read(reinterpret_cast<char *>(&footer), sizeof(footer));
-  if (std::memcmp(footer.magic, "SST\0", 4) != 0)
-    return false;
-
-  if (footer.version < 3) {
-    // v1/v2 数据区未压缩，由 get() 直接从文件 seek 读取
-    return false;
-  }
 
   // v3: seek 到文件开头读取压缩数据区
   file.seekg(0, std::ios::beg);
@@ -338,7 +381,7 @@ bool SSTable::load_data() const {
 
   // 校验 checksum
   uint32_t checksum = compute_checksum(compressed_data);
-  if (footer.checksum != checksum) {
+  if (footer_.checksum != checksum) {
     std::cerr << "[Warning] SSTable::load_data: checksum mismatch in file: "
               << file_path_ << std::endl;
     return false;

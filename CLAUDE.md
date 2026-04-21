@@ -123,7 +123,8 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 - Bloom Filter 区：`[bf_size(4字节)][bf_data]`，存储序列化后的 Bloom Filter，用于查询前预检查
 - Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v3）、CRC32 校验和、Bloom Filter 区起始偏移（`reserved` 字段）
 - 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
-- `load_index()` 惰性加载索引区和 Bloom Filter，`load_data()` 惰性加载并解压数据区，结果缓存在 `mutable` 成员中
+- 惰性加载机制：`load_footer()` 缓存 Footer，`load_bloom_filter()` 缓存 Bloom Filter，`load_index()` 缓存索引区，`load_data()` 缓存并解压数据区，均通过 `mutable` 成员实现，每个组件只加载一次
+- 查询路径三步渐进：Bloom Filter 预检查（轻量）→ 索引加载 + 二分查找（中等）→ 数据区读取（按需），大部分不相关的 SSTable 在第一步就被跳过
 
 **Entry 序列化格式**（小端序）：
 ```

@@ -72,6 +72,10 @@ std::optional<std::string> KVStore::get(const std::string &key) const {
   // 再查 SSTable（Level 0 → Level 1 → ...，每层内从新到旧）
   for (int level = 0; level < MAX_LEVEL; ++level) {
     for (auto it = levels_[level].rbegin(); it != levels_[level].rend(); ++it) {
+      // Bloom Filter 预检查（轻量，不加载索引）
+      if (!(*it)->may_contain(key))
+        continue;
+
       const auto &entries = (*it)->index_entries();
       auto idx_it =
           std::lower_bound(entries.begin(), entries.end(), key,
@@ -82,9 +86,7 @@ std::optional<std::string> KVStore::get(const std::string &key) const {
         if (idx_it->type == core::OpType::DELETE)
           return std::nullopt;
 
-        auto sst_result = (*it)->get(key);
-        if (sst_result.has_value())
-          return sst_result;
+        return (*it)->get_value_at(idx_it->offset);
       }
     }
   }
@@ -148,7 +150,7 @@ void KVStore::recover_sstables() {
 
     // 加载到对应层
     for (const auto &file : sst_files) {
-      auto sstable = std::make_unique<core ::SSTable>(file);
+      auto sstable = std::make_unique<core::SSTable>(file);
       levels_[level].emplace_back(std::move(sstable));
     }
 
@@ -175,8 +177,7 @@ void KVStore::maybe_flush() {
   }
 
   // 2. 把当前 memtable move 给 immutable
-  uint64_t next_ts =
-      mem_table_->peek_next_timestamp(); // 继承旧的时间戳
+  uint64_t next_ts = mem_table_->peek_next_timestamp(); // 继承旧的时间戳
   immutable_mem_table_ = std::move(mem_table_);
 
   // 3. 创建新的空 memtable

@@ -108,7 +108,7 @@ struct Entry {
 - **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、版本号（v3）、CRC32 校验和（对压缩数据区计算，用于检测文件损坏）、Bloom Filter 区偏移（`reserved` 字段）等
 - 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
 
-读取流程：加载 Footer → 定位索引区和 Bloom Filter → Bloom Filter 预检查 → 二分查找 key → v3 从解压缓冲区读取 Entry / v1/v2 从文件 seek 读取。
+读取流程（三步渐进式加载）：Footer 缓存（只读一次）→ Bloom Filter 预检查（轻量，跳过不相关的 SSTable）→ 索引加载 + 二分查找 → v3 从未压缩数据缓冲区读取 Entry / v1/v2 从文件 seek 读取。所有组件惰性缓存，每个 SSTable 实例只加载一次。
 
 ### BloomFilter — 布隆过滤器
 
@@ -134,10 +134,12 @@ Client → KVStore::put()
                              ├─ flush_immutable()       // 如果有旧的 immutable，先 flush
                              ├─ move memtable → immutable // 所有权转移，O(1)
                              ├─ 创建新的空 MemTable      // 写入路径不阻塞
-                             └─ flush_immutable()        // 将 immutable 写入 SSTable
+                             │   └─ advance_timestamp()   // 传递时间戳
+                             └─ flush_immutable()        // 将 immutable 写入 Level 0 SSTable
                                    ├─ SSTable::write_from_entries()
                                    ├─ immutable.reset()
-                                   └─ WAL::clear()
+                                   ├─ WAL::clear()
+                                   └─ maybe_compact()     // 检查是否需要 Compaction
 ```
 
 ### 读取流程
@@ -153,7 +155,7 @@ Client → KVStore::get(key)
            │     ├─ key 存在且为 PUT → 返回值
            │     └─ key 存在且为 DELETE → 返回 nullopt（墓碑短路）
            │
-           └─→ SSTable 查找（从新到旧） // 3. 逐表查找
+           └─→ SSTable 查找（逐层 Level 0 → Level N，每层从新到旧） // 3. 逐表查找
                  ├─ Bloom Filter 预检查 → 不可能包含则跳过
                  ├─ key 存在且为 PUT → 返回值
                  ├─ key 存在且为 DELETE → 返回 nullopt（墓碑短路，不继续搜索旧表）
@@ -166,7 +168,7 @@ Client → KVStore::get(key)
 ```
 KVStore 构造
     │
-    ├─→ recover_sstables()         // 1. 加载已有 SSTable 文件
+    ├─→ recover_sstables()         // 1. 扫描各层目录，加载已有 SSTable 文件
     │
     └─→ recover_from_wal()         // 2. 从 WAL 重放未 Flush 的操作
           ├─ WAL::read_all()
@@ -214,7 +216,8 @@ data/
 | ------------ | --------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Flush 阈值   | 默认 32 MB（可配置）                                            | 构造函数参数 `flush_threshold_`，MemTable 序列化大小达到此值触发 |
 | SSTable 编号 | 全局递增 uint64_t                                               | `next_sst_id_` 控制                                              |
-| 时间戳       | 全局递增 uint64_t                                               | MemTable 内维护 `next_timestamp_`                                |
+| 时间戳       | 全局递增 uint64_t                                               | `MemTable::next_timestamp_` 从 1 开始，跨 MemTable 通过 `advance_timestamp()` 传递 |
 | 命名空间     | `x1nglsm` / `x1nglsm::core` / `x1nglsm::cli` / `x1nglsm::utils` | —                                                                |
 | C++ 标准     | C++17                                                           | —                                                                |
 | 压缩算法     | LZ4（内嵌 third_party/lz4）                                     | SSTable 数据区压缩                                               |
+| Compaction   | Size-Tiered 策略                                                | `COMPACTION_TRIGGER = 4`（触发阈值），`MAX_LEVEL = 4`（最大层数）|
