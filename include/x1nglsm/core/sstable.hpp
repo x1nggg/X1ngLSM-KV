@@ -53,6 +53,9 @@ public:
   // 获取所有 key（包括墓碑）
   std::vector<std::string> all_keys() const;
 
+  // 获取所有 Entry（用于 Compaction）
+  std::vector<Entry> get_all_entries() const;
+
   // 获取索引项（包含类型信息，用于跨 SSTable 墓碑处理）
   const std::vector<IndexEntry> &index_entries() const;
 

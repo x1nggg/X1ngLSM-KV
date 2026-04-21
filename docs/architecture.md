@@ -102,7 +102,7 @@ struct Entry {
 └──────────────────────────────────┘
 ```
 
-- **压缩数据区**：Entry 列表序列化后用 LZ4 压缩，索引中的偏移量指向解压后缓冲区
+- **压缩数据区**：Entry 列表序列化后用 LZ4 压缩，索引中的偏移量指向未压缩数据缓冲区（写入时记录，读取时用于定位解压后数据）
 - **索引区**：每条记录 key 和对应的数据偏移量，支持二分查找
 - **Bloom Filter 区**：序列化后的 Bloom Filter，查询前预检查，跳过不存在的 key
 - **Footer**：文件校验信息，含 magic `"SST\0"`、条目数、版本号（v3）、CRC32 校验和（对压缩数据区计算，用于检测文件损坏）、Bloom Filter 区偏移（`reserved` 字段）等
@@ -183,18 +183,30 @@ KVStore 构造
 - `SSTable` 中的墓碑会阻止对更旧 SSTable 的搜索
 - `KVStore::get()` 通过直接检查 `MemTable` 内部存储和 `SSTable::index_entries()` 的类型信息实现墓碑短路
 - `KVStore::keys()` 同样利用类型信息正确过滤跨 SSTable 的墓碑
-- 墓碑数据在 Flush 时写入 SSTable，未来可通过 Compaction 清理
+- 墓碑数据在 Flush 时写入 SSTable，通过 Compaction 合并时清理
 
 ## 数据目录结构
 
 ```
 data/
 ├── wal.log                    # WAL 文件
-└── sstables/
-    ├── 1.sst               # SSTable 文件（按 ID 递增编号）
-    ├── 2.sst
-    └── ...
+├── level_0/
+│   └── 1.sst               # SSTable 文件（按 ID 递增编号）
+├── level_1/
+│   └── 5.sst               # Compaction 合并后的 SSTable
+├── level_2/
+└── level_3/
 ```
+
+## Compaction（压缩合并）
+
+采用 Size-Tiered 策略：
+
+- **触发条件**：Level N 的 SSTable 数量达到阈值（`COMPACTION_TRIGGER = 4`）时触发
+- **合并流程**：`KVStore::compact(level)` 收集同层所有 SSTable 的 Entry → 按 key 升序 + 时间戳降序排序 → 去重保留最新版本 → 写入新 SSTable 到 Level N+1 → 删除旧文件
+- **墓碑处理**：判断 Level N+1 是否为事实上的最底层（更深层均无数据）。最底层丢弃墓碑和被墓碑覆盖的旧 Entry；非最底层保留墓碑
+- **全局参数**：`MAX_LEVEL = 4`（最大层数），`COMPACTION_TRIGGER = 4`（触发阈值）
+- Flush 完成后自动调用 `maybe_compact()` 检查是否需要触发
 
 ## 全局设计约束
 

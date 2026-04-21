@@ -2,6 +2,7 @@
 #include "x1nglsm/core/bloom_filter.hpp"
 
 #include "lz4.h"
+#include "x1nglsm/kv_store.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -13,7 +14,8 @@ namespace x1nglsm::core {
 // 从 Entry 列表创建 SSTable 文件（v3 格式）
 // 文件布局：[压缩数据区] → [索引区] → [Bloom Filter 区] → [Footer]
 // 压缩数据区格式：[原始大小(4)][压缩大小(4)][LZ4 压缩数据]
-// 索引区格式：每条 [key_len(4)][key][offset(8)][type(1)]，offset 指向解压后缓冲区
+// 索引区格式：每条 [key_len(4)][key][offset(8)][type(1)]，offset
+// 指向未压缩数据缓冲区（写入时记录，读取时用于定位解压后数据）
 bool SSTable::write_from_entries(const std::vector<Entry> &entries) {
   std::ofstream file(file_path_, std::ios::binary);
   if (!file)
@@ -133,6 +135,7 @@ std::optional<std::string> SSTable::get(const std::string &key) const {
     uint32_t len;
     std::memcpy(&len, ptr, sizeof(len));
     std::string data(ptr + sizeof(len), len);
+
     entry_opt = Entry::decode(data);
   } else {
     // v1/v2：从文件直接读取
@@ -145,6 +148,7 @@ std::optional<std::string> SSTable::get(const std::string &key) const {
     file.read(reinterpret_cast<char *>(&len), sizeof(len));
     std::string data(len, '\0');
     file.read(data.data(), len);
+
     entry_opt = Entry::decode(data);
   }
 
@@ -188,6 +192,50 @@ std::vector<std::string> SSTable::all_keys() const {
   }
 
   return result;
+}
+
+std::vector<Entry> SSTable::get_all_entries() const {
+  if (!load_index())
+    return {};
+
+  std::vector<Entry> entries;
+  entries.reserve(index_.size());
+
+  if (version_ >= 3) {
+    // v3：加载并解压数据区，从解压缓冲区读取
+    if (!load_data())
+      return {};
+
+    for (const auto &idx : index_) {
+      const char *ptr = decompressed_data_.data() + idx.offset;
+      uint32_t len;
+      std::memcpy(&len, ptr, sizeof(len));
+      std::string data(ptr + sizeof(len), len);
+
+      auto entry_opt = Entry::decode(data);
+      if (entry_opt.has_value())
+        entries.emplace_back(std::move(entry_opt.value()));
+    }
+  } else {
+    // v1/v2：从文件直接读取
+    std::ifstream file(file_path_, std::ios::binary);
+    if (!file)
+      return {};
+
+    for (const auto &idx : index_) {
+      file.seekg(idx.offset);
+      uint32_t len;
+      file.read(reinterpret_cast<char *>(&len), sizeof(len));
+      std::string data(len, 0);
+      file.read(data.data(), len);
+
+      auto entry_opt = Entry::decode(data);
+      if (entry_opt.has_value())
+        entries.emplace_back(std::move(entry_opt.value()));
+    }
+  }
+
+  return entries;
 }
 
 const std::vector<IndexEntry> &SSTable::index_entries() const {

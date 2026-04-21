@@ -117,7 +117,7 @@ int main() {
 
 ```bash
 ./bin/cli/x1nglsm-cli              # 默认数据目录 ./data/cli
-./bin/cli/x1nglsm-cli /path/to/db  # 指定数据目录
+./bin/cli/x1nglsm-cli --dir /path/to/db  # 指定数据目录
 ```
 
 ### 命令列表

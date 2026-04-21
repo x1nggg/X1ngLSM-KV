@@ -75,7 +75,7 @@ std::vector<std::string> MemTable::keys() const {
 
   for (auto *node = table_.header()->forward[0]; node != nullptr;
        node = node->forward[0]) {
-    // 只返回未被删除的key（非墓碑key
+    // 只返回未被删除的key（非墓碑key）
     if (!node->value.is_tombstone()) {
       result.emplace_back(node->key);
     }

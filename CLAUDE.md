@@ -83,11 +83,17 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 **Flush 流程**（`KVStore::maybe_flush`）：
 1. 如果已有 Immutable MemTable（上一轮还没 flush 完），先调用 `flush_immutable()` 将其写入 SSTable
 2. 将当前活跃 MemTable move 给 Immutable MemTable（`std::unique_ptr` 所有权转移，O(1)）
-3. 创建新的空 MemTable 继续接收写入（写入路径不阻塞）
-4. 调用 `flush_immutable()` 将 Immutable MemTable 写入 SSTable，然后清空 Immutable MemTable 和 WAL
+3. 创建新的空 MemTable 继续接收写入（写入路径不阻塞），并通过 `advance_timestamp()` 传递时间戳
+4. 调用 `flush_immutable()` 将 Immutable MemTable 写入 Level 0 SSTable，然后清空 Immutable MemTable 和 WAL，最后检查是否需要触发 Compaction
+
+**Compaction 流程**（`KVStore::compact`）：
+- 采用 Size-Tiered 策略：Level N 的 SSTable 数量达到阈值（4 个）时，合并到 Level N+1
+- 合并算法：收集同层所有 SSTable 的 Entry，按 key 升序 + 时间戳降序排序，去重保留最新版本
+- 墓碑处理：最底层（下一层及更深层均无数据）丢弃墓碑和被墓碑覆盖的旧 Entry；非最底层保留墓碑
+- 合并后删除旧 SSTable 文件，新 SSTable 写入下一层
 
 **崩溃恢复流程**（`KVStore` 构造函数）：
-1. `recover_sstables()`：扫描 `sstables/` 目录，加载已有 SSTable 文件
+1. `recover_sstables()`：扫描各层目录（`level_0/` ~ `level_N/`），加载已有 SSTable 文件
 2. `recover_from_wal()`：从 WAL 重放未 Flush 的操作到 MemTable，然后调用 `MemTable::advance_timestamp(max_ts + 1)` 推进时间戳
 
 ### 关键组件
@@ -113,7 +119,7 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 **SSTable**（`src/core/sstable.cpp`）：
 - 文件布局（v3）：压缩数据区 → 索引区 → Bloom Filter 区 → Footer（固定大小）
 - 数据区使用 LZ4 压缩，格式为 `[原始大小(4字节)][压缩大小(4字节)][压缩数据]`
-- 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找，偏移量指向解压后缓冲区
+- 索引区包含 `IndexEntry`（key + 偏移量 + OpType），支持二分查找，偏移量指向未压缩数据缓冲区（写入时记录，读取时用于定位解压后数据）
 - Bloom Filter 区：`[bf_size(4字节)][bf_data]`，存储序列化后的 Bloom Filter，用于查询前预检查
 - Footer 包含 magic `"SST\0"`、条目数、数据区结束偏移、版本号（v3）、CRC32 校验和、Bloom Filter 区起始偏移（`reserved` 字段）
 - 版本兼容：v3=LZ4 压缩数据区，v2=增加 Bloom Filter，v1=初始格式；v1/v2 文件仍可正常读取
@@ -133,9 +139,12 @@ cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ```
 data/
 ├── wal.log                    # WAL 文件
-└── sstables/
-    ├── 1.sst                  # SSTable 文件（按 ID 递增编号）
-    └── ...
+├── level_0/
+│   └── 1.sst                  # SSTable 文件（按 ID 递增编号）
+├── level_1/
+│   └── 5.sst                  # Compaction 合并后的 SSTable
+├── level_2/
+└── level_3/
 ```
 
 ## 构建系统说明

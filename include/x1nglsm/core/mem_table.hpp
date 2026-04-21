@@ -3,6 +3,7 @@
 #include "entry.hpp"
 #include "x1nglsm/core/skip_list.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -83,10 +84,14 @@ public:
   // 判断是否为空
   bool empty() const { return table_.empty(); };
 
+  // 获取当前 MemTable 序列化后的字节大小
   size_t total_encoded_size() const { return total_encoded_size_; };
 
-  // 获取下一个时间戳
+  // 获取下一个时间戳（会递增）
   uint64_t get_next_timestamp() { return next_timestamp_++; };
+
+  // 获取下一个时间戳（不递增，用于时间戳传递）
+  uint64_t peek_next_timestamp() const { return next_timestamp_; };
 
   // 将 next_timestamp_ 推进到至少 ts（用于 WAL 恢复后校正时间戳）
   void advance_timestamp(uint64_t ts) {
